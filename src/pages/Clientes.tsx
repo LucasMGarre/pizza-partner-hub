@@ -4,8 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, Trash2, Edit, Phone, Mail, MapPin } from 'lucide-react';
+import { Plus, Search, Trash2, Edit, Phone, Mail, MapPin, User } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, remove, update } from 'firebase/database';
 import { toast } from 'sonner';
@@ -86,11 +85,11 @@ const Clientes = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-8 animate-fade-in">
+      <div className="space-y-6 sm:space-y-8 animate-fade-in">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Clientes</h1>
-            <p className="text-muted-foreground mt-1">Gerencie seus clientes</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Clientes</h1>
+            <p className="text-muted-foreground mt-1 text-sm sm:text-base">Gerencie seus clientes</p>
           </div>
           <Dialog open={isOpen} onOpenChange={(open) => {
             setIsOpen(open);
@@ -100,12 +99,12 @@ const Clientes = () => {
             }
           }}>
             <DialogTrigger asChild>
-              <Button className="gradient-primary text-primary-foreground gap-2">
+              <Button className="gradient-primary text-primary-foreground gap-2 w-full sm:w-auto">
                 <Plus className="w-4 h-4" />
                 Novo Cliente
               </Button>
             </DialogTrigger>
-            <DialogContent className="glass border-border">
+            <DialogContent className="glass border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle className="text-foreground">
                   {editingClient ? 'Editar Cliente' : 'Novo Cliente'}
@@ -161,36 +160,89 @@ const Clientes = () => {
           </Dialog>
         </div>
 
-        <div className="glass rounded-2xl p-6">
-          <div className="relative mb-6 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+        <div className="glass rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <div className="relative mb-4 sm:mb-6">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
             <Input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Buscar clientes..."
-              className="pl-10 bg-secondary border-border"
+              className="pl-9 sm:pl-10 bg-secondary border-border"
             />
           </div>
 
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-muted-foreground">Nome</TableHead>
-                  <TableHead className="text-muted-foreground">Contato</TableHead>
-                  <TableHead className="text-muted-foreground">Endereço</TableHead>
-                  <TableHead className="text-muted-foreground text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+          {/* Mobile Cards View */}
+          <div className="grid grid-cols-1 gap-3 sm:hidden">
+            {filteredClients.map((client, index) => (
+              <div
+                key={client.id}
+                className="glass rounded-xl p-4 animate-slide-up"
+                style={{ animationDelay: `${index * 0.05}s` }}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
+                      <User className="w-5 h-5 text-primary-foreground" />
+                    </div>
+                    <h3 className="font-semibold text-foreground">{client.name}</h3>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleEdit(client)}
+                      className="text-muted-foreground hover:text-primary h-8 w-8"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(client.id)}
+                      className="text-muted-foreground hover:text-destructive h-8 w-8"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{client.email}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Phone className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{client.phone}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{client.address}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table View */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">Nome</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">Contato</th>
+                  <th className="text-left py-3 px-4 text-muted-foreground font-medium">Endereço</th>
+                  <th className="text-right py-3 px-4 text-muted-foreground font-medium">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
                 {filteredClients.map((client, index) => (
-                  <TableRow 
+                  <tr 
                     key={client.id} 
-                    className="border-border animate-slide-up"
+                    className="border-b border-border/50 animate-slide-up hover:bg-secondary/30 transition-colors"
                     style={{ animationDelay: `${index * 0.05}s` }}
                   >
-                    <TableCell className="font-medium text-foreground">{client.name}</TableCell>
-                    <TableCell>
+                    <td className="py-4 px-4 font-medium text-foreground">{client.name}</td>
+                    <td className="py-4 px-4">
                       <div className="flex flex-col gap-1">
                         <span className="text-sm text-foreground flex items-center gap-1">
                           <Mail className="w-3 h-3 text-muted-foreground" />
@@ -201,14 +253,14 @@ const Clientes = () => {
                           {client.phone}
                         </span>
                       </div>
-                    </TableCell>
-                    <TableCell>
+                    </td>
+                    <td className="py-4 px-4">
                       <span className="text-sm text-muted-foreground flex items-center gap-1">
                         <MapPin className="w-3 h-3" />
                         {client.address}
                       </span>
-                    </TableCell>
-                    <TableCell className="text-right">
+                    </td>
+                    <td className="py-4 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button
                           variant="ghost"
@@ -227,17 +279,18 @@ const Clientes = () => {
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
-            {filteredClients.length === 0 && (
-              <div className="text-center py-12 text-muted-foreground">
-                Nenhum cliente encontrado
-              </div>
-            )}
+              </tbody>
+            </table>
           </div>
+
+          {filteredClients.length === 0 && (
+            <div className="text-center py-12 text-muted-foreground">
+              Nenhum cliente encontrado
+            </div>
+          )}
         </div>
       </div>
     </DashboardLayout>

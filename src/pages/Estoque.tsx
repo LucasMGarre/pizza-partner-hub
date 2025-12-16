@@ -104,27 +104,27 @@ const Estoque = () => {
 
   return (
     <DashboardLayout>
-      <div className="space-y-8 animate-fade-in">
+      <div className="space-y-6 sm:space-y-8 animate-fade-in">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">Estoque</h1>
-            <p className="text-muted-foreground mt-1">Controle de produtos e ingredientes</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Estoque</h1>
+            <p className="text-muted-foreground mt-1 text-sm sm:text-base">Controle de produtos e ingredientes</p>
           </div>
           <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
-              <Button className="gradient-primary text-primary-foreground gap-2">
+              <Button className="gradient-primary text-primary-foreground gap-2 w-full sm:w-auto">
                 <Plus className="w-4 h-4" />
                 Novo Produto
               </Button>
             </DialogTrigger>
-            <DialogContent className="glass border-border">
+            <DialogContent className="glass border-border mx-4 sm:mx-auto max-w-[calc(100vw-2rem)] sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle className="text-foreground">
                   {editingProduct ? 'Editar Produto' : 'Novo Produto'}
                 </DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label className="text-foreground">Nome</Label>
                     <Input
@@ -146,9 +146,9 @@ const Estoque = () => {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-3 sm:gap-4">
                   <div className="space-y-2">
-                    <Label className="text-foreground">Quantidade</Label>
+                    <Label className="text-foreground text-xs sm:text-sm">Quantidade</Label>
                     <Input
                       type="number"
                       value={formData.quantity}
@@ -158,7 +158,7 @@ const Estoque = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-foreground">Mín.</Label>
+                    <Label className="text-foreground text-xs sm:text-sm">Mín.</Label>
                     <Input
                       type="number"
                       value={formData.minQuantity}
@@ -167,7 +167,7 @@ const Estoque = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-foreground">Unidade</Label>
+                    <Label className="text-foreground text-xs sm:text-sm">Unidade</Label>
                     <Input
                       value={formData.unit}
                       onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
@@ -197,81 +197,81 @@ const Estoque = () => {
         </div>
 
         {lowStockCount > 0 && (
-          <div className="glass rounded-2xl p-4 border-l-4 border-l-accent flex items-center gap-4">
-            <AlertTriangle className="w-6 h-6 text-accent" />
+          <div className="glass rounded-xl sm:rounded-2xl p-3 sm:p-4 border-l-4 border-l-accent flex items-center gap-3 sm:gap-4">
+            <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6 text-accent flex-shrink-0" />
             <div>
-              <p className="text-foreground font-medium">Atenção ao estoque!</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-foreground font-medium text-sm sm:text-base">Atenção ao estoque!</p>
+              <p className="text-xs sm:text-sm text-muted-foreground">
                 {lowStockCount} {lowStockCount === 1 ? 'produto está' : 'produtos estão'} com estoque baixo
               </p>
             </div>
           </div>
         )}
 
-        <div className="glass rounded-2xl p-6">
-          <div className="relative mb-6 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+        <div className="glass rounded-xl sm:rounded-2xl p-4 sm:p-6">
+          <div className="relative mb-4 sm:mb-6">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
             <Input
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Buscar produtos..."
-              className="pl-10 bg-secondary border-border"
+              className="pl-9 sm:pl-10 bg-secondary border-border"
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
             {filteredProducts.map((product, index) => {
               const isLowStock = product.quantity <= product.minQuantity;
               return (
                 <div
                   key={product.id}
                   className={cn(
-                    "glass rounded-xl p-5 transition-all duration-300 hover:scale-[1.02] animate-slide-up",
+                    "glass rounded-xl p-4 sm:p-5 transition-all duration-300 hover:scale-[1.02] animate-slide-up",
                     isLowStock && "border-l-4 border-l-accent"
                   )}
                   style={{ animationDelay: `${index * 0.05}s` }}
                 >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-                      <Package className="w-5 h-5 text-primary-foreground" />
+                  <div className="flex items-start justify-between mb-3 sm:mb-4">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl gradient-primary flex items-center justify-center">
+                      <Package className="w-4 h-4 sm:w-5 sm:h-5 text-primary-foreground" />
                     </div>
                     <div className="flex gap-1">
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => handleEdit(product)}
-                        className="text-muted-foreground hover:text-primary h-8 w-8"
+                        className="text-muted-foreground hover:text-primary h-7 w-7 sm:h-8 sm:w-8"
                       >
-                        <Edit className="w-4 h-4" />
+                        <Edit className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </Button>
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => handleDelete(product.id)}
-                        className="text-muted-foreground hover:text-destructive h-8 w-8"
+                        className="text-muted-foreground hover:text-destructive h-7 w-7 sm:h-8 sm:w-8"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </Button>
                     </div>
                   </div>
-                  <h3 className="font-semibold text-foreground mb-1">{product.name}</h3>
-                  <p className="text-sm text-muted-foreground mb-3">{product.category}</p>
+                  <h3 className="font-semibold text-foreground mb-1 text-sm sm:text-base">{product.name}</h3>
+                  <p className="text-xs sm:text-sm text-muted-foreground mb-2 sm:mb-3">{product.category}</p>
                   <div className="flex items-center justify-between">
                     <div>
                       <span className={cn(
-                        "text-2xl font-bold",
+                        "text-xl sm:text-2xl font-bold",
                         isLowStock ? "text-accent" : "text-foreground"
                       )}>
                         {product.quantity}
                       </span>
-                      <span className="text-sm text-muted-foreground ml-1">{product.unit}</span>
+                      <span className="text-xs sm:text-sm text-muted-foreground ml-1">{product.unit}</span>
                     </div>
-                    <span className="text-sm text-muted-foreground">
+                    <span className="text-xs sm:text-sm text-muted-foreground">
                       R$ {product.price.toFixed(2)}
                     </span>
                   </div>
                   {isLowStock && (
-                    <p className="text-xs text-accent mt-2 flex items-center gap-1">
+                    <p className="text-[10px] sm:text-xs text-accent mt-2 flex items-center gap-1">
                       <AlertTriangle className="w-3 h-3" />
                       Estoque baixo
                     </p>
