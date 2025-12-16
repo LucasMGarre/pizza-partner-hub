@@ -1,498 +1,570 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
 import { 
-  MessageCircle, 
-  Settings, 
+  MessageSquare, 
   Power, 
-  Users, 
-  Clock, 
-  CheckCheck, 
-  Send,
-  Smartphone,
-  Zap,
-  BarChart3,
-  Bot,
+  Send, 
+  UserPlus, 
   Phone,
-  Save
+  Bot,
+  Zap,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Users,
+  TrendingUp,
+  Shield,
+  Plus,
+  Trash2,
+  Edit2
 } from 'lucide-react';
+import { ref, set, onValue } from 'firebase/database';
 import { database } from '@/lib/firebase';
-import { ref, onValue, push, update } from 'firebase/database';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
 
-interface Conversation {
+interface Rule {
   id: string;
-  name: string;
-  phone: string;
-  lastMessage: string;
-  timestamp: string;
-  unread: number;
-  status: 'online' | 'offline' | 'typing';
+  keyword: string;
+  response: string;
+  active: boolean;
 }
 
-interface Message {
+interface BroadcastMessage {
   id: string;
-  role: 'user' | 'bot';
-  content: string;
-  timestamp: string;
-  status: 'sent' | 'delivered' | 'read';
-}
-
-interface WhatsAppConfig {
-  isActive: boolean;
-  welcomeMessage: string;
-  awayMessage: string;
-  businessHoursStart: string;
-  businessHoursEnd: string;
-  autoReply: boolean;
-  botName: string;
+  message: string;
+  scheduledAt: string;
+  status: 'pending' | 'sent' | 'failed';
 }
 
 const WhatsApp = () => {
-  const [conversations, setConversations] = useState<Conversation[]>([
-    { id: '1', name: 'João Silva', phone: '+55 11 99999-0001', lastMessage: 'Quero fazer um pedido', timestamp: '14:32', unread: 2, status: 'online' },
-    { id: '2', name: 'Maria Santos', phone: '+55 11 99999-0002', lastMessage: 'Qual o tempo de entrega?', timestamp: '13:45', unread: 0, status: 'offline' },
-    { id: '3', name: 'Pedro Oliveira', phone: '+55 11 99999-0003', lastMessage: 'Obrigado!', timestamp: '12:20', unread: 0, status: 'offline' },
-    { id: '4', name: 'Ana Costa', phone: '+55 11 99999-0004', lastMessage: 'Vocês têm pizza vegana?', timestamp: '11:15', unread: 1, status: 'typing' },
+  const [botEnabled, setBotEnabled] = useState(true);
+  const [botPrompt, setBotPrompt] = useState('Você é um assistente virtual da Eco Pizzaria. Seja sempre cordial e ajude os clientes com informações sobre cardápio, preços e pedidos.');
+  const [firstContactMessage, setFirstContactMessage] = useState('Olá! 👋 Bem-vindo à Eco Pizzaria! Como posso ajudar você hoje?');
+  const [connectedNumber, setConnectedNumber] = useState('+55 11 99999-9999');
+  const [newNumber, setNewNumber] = useState('');
+  const [showChangeNumber, setShowChangeNumber] = useState(false);
+  const [rules, setRules] = useState<Rule[]>([
+    { id: '1', keyword: 'cardápio', response: 'Nosso cardápio completo está disponível em...', active: true },
+    { id: '2', keyword: 'horário', response: 'Funcionamos de terça a domingo, das 18h às 23h.', active: true },
+    { id: '3', keyword: 'promoção', response: 'Confira nossas promoções da semana!', active: false },
+  ]);
+  const [newRule, setNewRule] = useState({ keyword: '', response: '' });
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastHistory, setBroadcastHistory] = useState<BroadcastMessage[]>([
+    { id: '1', message: 'Promoção de terça: Pizza grande por R$49,90!', scheduledAt: '2024-01-15 18:00', status: 'sent' },
+    { id: '2', message: 'Novidade: Pizza de Nutella chegou!', scheduledAt: '2024-01-16 19:00', status: 'pending' },
   ]);
 
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [config, setConfig] = useState<WhatsAppConfig>({
-    isActive: true,
-    welcomeMessage: 'Olá! Bem-vindo à Eco Pizzaria 🍕\nComo posso ajudar você hoje?',
-    awayMessage: 'Estamos fora do horário de atendimento. Retornaremos em breve!',
-    businessHoursStart: '18:00',
-    businessHoursEnd: '23:00',
-    autoReply: true,
-    botName: 'EcoBot',
-  });
-  const [activeTab, setActiveTab] = useState('conversations');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const stats = {
+    messagesReceived: 1247,
+    messagesSent: 892,
+    activeConversations: 23,
+    avgResponseTime: '2.3 min'
+  };
 
   useEffect(() => {
     const configRef = ref(database, 'whatsapp/config');
-    const unsubConfig = onValue(configRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) setConfig(data);
+    onValue(configRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        if (data.botEnabled !== undefined) setBotEnabled(data.botEnabled);
+        if (data.botPrompt) setBotPrompt(data.botPrompt);
+        if (data.firstContactMessage) setFirstContactMessage(data.firstContactMessage);
+        if (data.connectedNumber) setConnectedNumber(data.connectedNumber);
+      }
     });
-    return () => unsubConfig();
+
+    const rulesRef = ref(database, 'whatsapp/rules');
+    onValue(rulesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const rulesArray = Object.entries(data).map(([id, rule]: [string, any]) => ({
+          id,
+          ...rule
+        }));
+        setRules(rulesArray);
+      }
+    });
   }, []);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const handleSelectConversation = (conversation: Conversation) => {
-    setSelectedConversation(conversation);
-    // Simulated messages
-    setMessages([
-      { id: '1', role: 'user', content: 'Oi, boa noite!', timestamp: '14:30', status: 'read' },
-      { id: '2', role: 'bot', content: config.welcomeMessage, timestamp: '14:30', status: 'read' },
-      { id: '3', role: 'user', content: conversation.lastMessage, timestamp: '14:32', status: 'read' },
-    ]);
-  };
-
-  const handleSend = async () => {
-    if (!input.trim() || !selectedConversation) return;
-    
-    const newMessage: Message = {
-      id: Date.now().toString(),
-      role: 'bot',
-      content: input,
-      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      status: 'sent',
-    };
-    
-    setMessages(prev => [...prev, newMessage]);
-    setInput('');
-    toast.success('Mensagem enviada!');
-  };
-
-  const handleSaveConfig = async () => {
+  const saveConfig = async () => {
     try {
-      await update(ref(database, 'whatsapp/config'), config);
+      await set(ref(database, 'whatsapp/config'), {
+        botEnabled,
+        botPrompt,
+        firstContactMessage,
+        connectedNumber
+      });
       toast.success('Configurações salvas!');
     } catch (error) {
       toast.error('Erro ao salvar configurações');
     }
   };
 
-  const stats = {
-    totalConversations: 156,
-    activeToday: 24,
-    avgResponseTime: '2min',
-    satisfaction: '98%',
+  const toggleBot = async () => {
+    const newState = !botEnabled;
+    setBotEnabled(newState);
+    await set(ref(database, 'whatsapp/config/botEnabled'), newState);
+    toast.success(newState ? 'Bot ativado!' : 'Bot desativado!');
+  };
+
+  const addRule = async () => {
+    if (!newRule.keyword || !newRule.response) {
+      toast.error('Preencha todos os campos');
+      return;
+    }
+    const id = Date.now().toString();
+    const rule = { ...newRule, active: true, id };
+    setRules([...rules, rule]);
+    await set(ref(database, `whatsapp/rules/${id}`), rule);
+    setNewRule({ keyword: '', response: '' });
+    toast.success('Regra adicionada!');
+  };
+
+  const toggleRule = async (id: string) => {
+    const updatedRules = rules.map(r => 
+      r.id === id ? { ...r, active: !r.active } : r
+    );
+    setRules(updatedRules);
+    const rule = updatedRules.find(r => r.id === id);
+    if (rule) {
+      await set(ref(database, `whatsapp/rules/${id}`), rule);
+    }
+  };
+
+  const deleteRule = async (id: string) => {
+    setRules(rules.filter(r => r.id !== id));
+    await set(ref(database, `whatsapp/rules/${id}`), null);
+    toast.success('Regra removida!');
+  };
+
+  const changeNumber = async () => {
+    if (!newNumber) {
+      toast.error('Digite o novo número');
+      return;
+    }
+    setConnectedNumber(newNumber);
+    await set(ref(database, 'whatsapp/config/connectedNumber'), newNumber);
+    setNewNumber('');
+    setShowChangeNumber(false);
+    toast.success('Número alterado!');
+  };
+
+  const sendBroadcast = () => {
+    if (!broadcastMessage) {
+      toast.error('Digite uma mensagem');
+      return;
+    }
+    const newBroadcast: BroadcastMessage = {
+      id: Date.now().toString(),
+      message: broadcastMessage,
+      scheduledAt: new Date().toLocaleString('pt-BR'),
+      status: 'pending'
+    };
+    setBroadcastHistory([newBroadcast, ...broadcastHistory]);
+    setBroadcastMessage('');
+    toast.success('Disparo agendado!');
   };
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 animate-fade-in">
-        {/* Header */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="space-y-6">
+        {/* Header com Status */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl lg:text-3xl font-bold text-foreground flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-green-500 flex items-center justify-center">
-                <MessageCircle className="w-5 h-5 text-white" />
-              </div>
-              WhatsApp Business
-            </h1>
-            <p className="text-muted-foreground mt-1">Gerencie seu atendimento via WhatsApp</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Painel WhatsApp</h1>
+            <p className="text-muted-foreground mt-1">Configure e controle seu chatbot</p>
           </div>
+          
           <div className="flex items-center gap-3">
-            <div className={cn(
-              "flex items-center gap-2 glass rounded-xl px-4 py-2",
-              config.isActive ? "border-green-500/50" : "border-destructive/50"
-            )}>
-              <div className={cn(
-                "w-2 h-2 rounded-full animate-pulse",
-                config.isActive ? "bg-green-500" : "bg-destructive"
-              )} />
-              <span className="text-sm text-foreground">{config.isActive ? 'Conectado' : 'Desconectado'}</span>
+            <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-4 py-2">
+              <div className={`w-2 h-2 rounded-full ${botEnabled ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-sm font-medium">{botEnabled ? 'Online' : 'Offline'}</span>
             </div>
+            <Button 
+              onClick={toggleBot}
+              variant={botEnabled ? "destructive" : "default"}
+              className="gap-2"
+            >
+              <Power className="w-4 h-4" />
+              {botEnabled ? 'Desligar' : 'Ligar'}
+            </Button>
           </div>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { icon: Users, label: 'Conversas Totais', value: stats.totalConversations, color: 'text-blue-500' },
-            { icon: Zap, label: 'Ativas Hoje', value: stats.activeToday, color: 'text-green-500' },
-            { icon: Clock, label: 'Tempo Médio', value: stats.avgResponseTime, color: 'text-amber-500' },
-            { icon: BarChart3, label: 'Satisfação', value: stats.satisfaction, color: 'text-purple-500' },
-          ].map((stat, index) => (
-            <div 
-              key={stat.label} 
-              className="glass rounded-2xl p-4 animate-slide-up"
-              style={{ animationDelay: `${index * 0.1}s` }}
-            >
-              <div className="flex items-center gap-3">
-                <div className={cn("p-2 rounded-xl bg-secondary", stat.color)}>
-                  <stat.icon className="w-5 h-5" />
+        {/* WhatsApp Conectado */}
+        <Card className="bg-gradient-to-r from-green-500/10 to-green-600/5 border-green-500/20">
+          <CardContent className="p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <Phone className="w-6 h-6 text-green-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-                  <p className="text-xs text-muted-foreground">{stat.label}</p>
+                  <p className="text-sm text-muted-foreground">WhatsApp Conectado</p>
+                  <p className="text-lg font-semibold text-foreground">{connectedNumber}</p>
                 </div>
               </div>
+              
+              {showChangeNumber ? (
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  <Input
+                    placeholder="+55 11 99999-9999"
+                    value={newNumber}
+                    onChange={(e) => setNewNumber(e.target.value)}
+                    className="bg-background/50"
+                  />
+                  <div className="flex gap-2">
+                    <Button onClick={changeNumber} size="sm">Salvar</Button>
+                    <Button onClick={() => setShowChangeNumber(false)} variant="outline" size="sm">Cancelar</Button>
+                  </div>
+                </div>
+              ) : (
+                <Button onClick={() => setShowChangeNumber(true)} variant="outline" className="gap-2">
+                  <Edit2 className="w-4 h-4" />
+                  Alterar Número
+                </Button>
+              )}
             </div>
-          ))}
-        </div>
+          </CardContent>
+        </Card>
 
-        {/* Main Content */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="glass w-full lg:w-auto grid grid-cols-3 lg:flex">
-            <TabsTrigger value="conversations" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
-              <MessageCircle className="w-4 h-4" />
-              <span className="hidden sm:inline">Conversas</span>
+        <Tabs defaultValue="dashboard" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto gap-1 bg-muted/50 p-1">
+            <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TrendingUp className="w-4 h-4" />
+              <span className="hidden sm:inline">Dashboard</span>
             </TabsTrigger>
-            <TabsTrigger value="automation" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger value="prompt" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Bot className="w-4 h-4" />
-              <span className="hidden sm:inline">Automação</span>
+              <span className="hidden sm:inline">Prompt</span>
             </TabsTrigger>
-            <TabsTrigger value="settings" className="gap-2 data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">Configurações</span>
+            <TabsTrigger value="rules" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Shield className="w-4 h-4" />
+              <span className="hidden sm:inline">Regras</span>
+            </TabsTrigger>
+            <TabsTrigger value="first-contact" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <UserPlus className="w-4 h-4" />
+              <span className="hidden sm:inline">1º Contato</span>
+            </TabsTrigger>
+            <TabsTrigger value="broadcast" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Send className="w-4 h-4" />
+              <span className="hidden sm:inline">Disparo</span>
             </TabsTrigger>
           </TabsList>
 
-          {/* Conversations Tab */}
-          <TabsContent value="conversations" className="mt-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Conversations List */}
-              <div className="glass rounded-2xl overflow-hidden">
-                <div className="p-4 border-b border-border">
-                  <Input 
-                    placeholder="Buscar conversas..." 
-                    className="bg-secondary border-border"
+          {/* Dashboard Tab */}
+          <TabsContent value="dashboard" className="space-y-6">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                      <MessageSquare className="w-5 h-5 text-blue-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Recebidas</p>
+                      <p className="text-xl font-bold">{stats.messagesReceived}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
+                      <Send className="w-5 h-5 text-green-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Enviadas</p>
+                      <p className="text-xl font-bold">{stats.messagesSent}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                      <Users className="w-5 h-5 text-amber-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Conversas Ativas</p>
+                      <p className="text-xl font-bold">{stats.activeConversations}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-card/50 backdrop-blur border-border/50">
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                      <Clock className="w-5 h-5 text-purple-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Tempo Resposta</p>
+                      <p className="text-xl font-bold">{stats.avgResponseTime}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-amber-500" />
+                  Status do Sistema
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                    <span>Conexão WhatsApp</span>
+                  </div>
+                  <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">Conectado</Badge>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    {botEnabled ? <CheckCircle className="w-5 h-5 text-green-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
+                    <span>Bot de Atendimento</span>
+                  </div>
+                  <Badge variant="outline" className={botEnabled ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"}>
+                    {botEnabled ? 'Ativo' : 'Inativo'}
+                  </Badge>
+                </div>
+                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-500" />
+                    <span>Regras Automáticas</span>
+                  </div>
+                  <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
+                    {rules.filter(r => r.active).length} ativas
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Prompt Tab */}
+          <TabsContent value="prompt" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="w-5 h-5 text-primary" />
+                  Prompt do Bot
+                </CardTitle>
+                <CardDescription>
+                  Configure a personalidade e comportamento do seu chatbot
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Instruções do Bot</Label>
+                  <Textarea
+                    value={botPrompt}
+                    onChange={(e) => setBotPrompt(e.target.value)}
+                    placeholder="Digite as instruções para o bot..."
+                    className="min-h-[200px] bg-muted/50"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Descreva como o bot deve se comportar, qual tom usar e quais informações priorizar.
+                  </p>
                 </div>
-                <div className="max-h-[500px] overflow-y-auto">
-                  {conversations.map((conv, index) => (
-                    <button
-                      key={conv.id}
-                      onClick={() => handleSelectConversation(conv)}
-                      className={cn(
-                        "w-full p-4 flex items-start gap-3 hover:bg-secondary/50 transition-colors border-b border-border/50 animate-slide-up",
-                        selectedConversation?.id === conv.id && "bg-secondary"
-                      )}
-                      style={{ animationDelay: `${index * 0.05}s` }}
-                    >
-                      <div className="relative">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-semibold">
-                          {conv.name.charAt(0)}
-                        </div>
-                        {conv.status === 'online' && (
-                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
-                        )}
-                        {conv.status === 'typing' && (
-                          <div className="absolute bottom-0 right-0 w-3 h-3 bg-blue-500 rounded-full border-2 border-card animate-pulse" />
-                        )}
-                      </div>
-                      <div className="flex-1 text-left min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium text-foreground truncate">{conv.name}</span>
-                          <span className="text-xs text-muted-foreground flex-shrink-0">{conv.timestamp}</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground truncate">{conv.lastMessage}</p>
-                        {conv.status === 'typing' && (
-                          <span className="text-xs text-blue-500">digitando...</span>
-                        )}
-                      </div>
-                      {conv.unread > 0 && (
-                        <Badge className="gradient-primary text-primary-foreground">{conv.unread}</Badge>
-                      )}
-                    </button>
-                  ))}
+                <Button onClick={saveConfig} className="w-full sm:w-auto">
+                  Salvar Prompt
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Rules Tab */}
+          <TabsContent value="rules" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-primary" />
+                  Regras do Chatbot
+                </CardTitle>
+                <CardDescription>
+                  Configure respostas automáticas baseadas em palavras-chave
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Nova Regra */}
+                <div className="p-4 bg-muted/30 rounded-lg space-y-4">
+                  <h4 className="font-medium flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    Adicionar Nova Regra
+                  </h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Palavra-chave</Label>
+                      <Input
+                        placeholder="Ex: cardápio, preço, horário..."
+                        value={newRule.keyword}
+                        onChange={(e) => setNewRule({ ...newRule, keyword: e.target.value })}
+                        className="bg-background/50"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Resposta Automática</Label>
+                      <Input
+                        placeholder="Resposta quando detectar a palavra..."
+                        value={newRule.response}
+                        onChange={(e) => setNewRule({ ...newRule, response: e.target.value })}
+                        className="bg-background/50"
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={addRule} className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    Adicionar Regra
+                  </Button>
                 </div>
-              </div>
 
-              {/* Chat Area */}
-              <div className="lg:col-span-2 glass rounded-2xl flex flex-col h-[500px]">
-                {selectedConversation ? (
-                  <>
-                    {/* Chat Header */}
-                    <div className="p-4 border-b border-border flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-semibold">
-                        {selectedConversation.name.charAt(0)}
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-foreground">{selectedConversation.name}</h3>
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Phone className="w-3 h-3" />
-                          {selectedConversation.phone}
-                        </p>
-                      </div>
-                      <Button variant="ghost" size="icon">
-                        <Smartphone className="w-5 h-5 text-muted-foreground" />
-                      </Button>
-                    </div>
-
-                    {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%23ffffff%22%20fill-opacity%3D%220.03%22%3E%3Cpath%20d%3D%22M36%2034v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6%2034v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6%204V0H4v4H0v2h4v4h2V6h4V4H6z%22%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E')]">
-                      {messages.map((message, index) => (
-                        <div
-                          key={message.id}
-                          className={cn(
-                            "flex gap-2 animate-slide-up",
-                            message.role === 'bot' && "flex-row-reverse"
-                          )}
-                          style={{ animationDelay: `${index * 0.1}s` }}
-                        >
-                          <div className={cn(
-                            "max-w-[75%] rounded-2xl p-3 shadow-sm",
-                            message.role === 'bot' 
-                              ? "bg-green-500 text-white rounded-tr-sm" 
-                              : "bg-card text-foreground rounded-tl-sm"
-                          )}>
-                            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
-                            <div className={cn(
-                              "flex items-center justify-end gap-1 mt-1",
-                              message.role === 'bot' ? "text-green-100" : "text-muted-foreground"
-                            )}>
-                              <span className="text-[10px]">{message.timestamp}</span>
-                              {message.role === 'bot' && (
-                                <CheckCheck className={cn(
-                                  "w-3 h-3",
-                                  message.status === 'read' && "text-blue-300"
-                                )} />
-                              )}
-                            </div>
-                          </div>
+                {/* Lista de Regras */}
+                <div className="space-y-3">
+                  <h4 className="font-medium">Regras Configuradas</h4>
+                  {rules.map((rule) => (
+                    <div key={rule.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-lg">
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+                            {rule.keyword}
+                          </Badge>
+                          <Badge variant={rule.active ? "default" : "secondary"} className="text-xs">
+                            {rule.active ? 'Ativa' : 'Inativa'}
+                          </Badge>
                         </div>
-                      ))}
-                      <div ref={messagesEndRef} />
-                    </div>
-
-                    {/* Input */}
-                    <div className="p-4 border-t border-border">
-                      <div className="flex gap-2">
-                        <Input
-                          value={input}
-                          onChange={(e) => setInput(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                          placeholder="Digite uma mensagem..."
-                          className="bg-secondary border-border"
+                        <p className="text-sm text-muted-foreground line-clamp-1">{rule.response}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={rule.active}
+                          onCheckedChange={() => toggleRule(rule.id)}
                         />
-                        <Button onClick={handleSend} className="gradient-primary text-primary-foreground px-4">
-                          <Send className="w-4 h-4" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => deleteRule(rule.id)}
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>
-                  </>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-                    <div className="w-20 h-20 rounded-full bg-secondary flex items-center justify-center mb-4">
-                      <MessageCircle className="w-10 h-10" />
-                    </div>
-                    <p className="text-lg font-medium">Selecione uma conversa</p>
-                    <p className="text-sm">Escolha um contato para iniciar o atendimento</p>
-                  </div>
-                )}
-              </div>
-            </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          {/* Automation Tab */}
-          <TabsContent value="automation" className="mt-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="glass rounded-2xl p-6 space-y-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-                    <Bot className="w-5 h-5 text-primary-foreground" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-semibold text-foreground">Respostas Automáticas</h2>
-                    <p className="text-sm text-muted-foreground">Configure mensagens automáticas</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/50">
-                  <div>
-                    <Label className="text-foreground">Auto-resposta ativa</Label>
-                    <p className="text-xs text-muted-foreground">Responder automaticamente</p>
-                  </div>
-                  <Switch
-                    checked={config.autoReply}
-                    onCheckedChange={(checked) => setConfig({ ...config, autoReply: checked })}
-                  />
-                </div>
-
+          {/* First Contact Tab */}
+          <TabsContent value="first-contact" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-primary" />
+                  Mensagem de Primeiro Contato
+                </CardTitle>
+                <CardDescription>
+                  Configure a mensagem enviada automaticamente para novos contatos
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label className="text-foreground">Mensagem de Boas-vindas</Label>
+                  <Label>Mensagem de Boas-vindas</Label>
                   <Textarea
-                    value={config.welcomeMessage}
-                    onChange={(e) => setConfig({ ...config, welcomeMessage: e.target.value })}
-                    className="bg-secondary border-border min-h-[120px]"
-                    placeholder="Digite a mensagem de boas-vindas..."
+                    value={firstContactMessage}
+                    onChange={(e) => setFirstContactMessage(e.target.value)}
+                    placeholder="Digite a mensagem de primeiro contato..."
+                    className="min-h-[150px] bg-muted/50"
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <Label className="text-foreground">Mensagem Fora do Horário</Label>
-                  <Textarea
-                    value={config.awayMessage}
-                    onChange={(e) => setConfig({ ...config, awayMessage: e.target.value })}
-                    className="bg-secondary border-border min-h-[100px]"
-                    placeholder="Digite a mensagem para fora do horário..."
-                  />
-                </div>
-              </div>
-
-              <div className="glass rounded-2xl p-6 space-y-6">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-                    <Clock className="w-5 h-5 text-primary-foreground" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-semibold text-foreground">Horário de Atendimento</h2>
-                    <p className="text-sm text-muted-foreground">Defina seu horário de funcionamento</p>
+                
+                {/* Preview */}
+                <div className="p-4 bg-muted/30 rounded-lg">
+                  <p className="text-xs text-muted-foreground mb-2">Preview:</p>
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 max-w-[280px]">
+                    <p className="text-sm">{firstContactMessage}</p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-foreground">Início</Label>
-                    <Input
-                      type="time"
-                      value={config.businessHoursStart}
-                      onChange={(e) => setConfig({ ...config, businessHoursStart: e.target.value })}
-                      className="bg-secondary border-border"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-foreground">Fim</Label>
-                    <Input
-                      type="time"
-                      value={config.businessHoursEnd}
-                      onChange={(e) => setConfig({ ...config, businessHoursEnd: e.target.value })}
-                      className="bg-secondary border-border"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20">
-                  <div className="flex items-start gap-3">
-                    <Zap className="w-5 h-5 text-green-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Dica</p>
-                      <p className="text-xs text-muted-foreground">
-                        As mensagens fora do horário serão enviadas automaticamente quando o bot estiver ativo.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <Button onClick={handleSaveConfig} className="w-full gradient-primary text-primary-foreground gap-2">
-                  <Save className="w-4 h-4" />
-                  Salvar Configurações
+                <Button onClick={saveConfig} className="w-full sm:w-auto">
+                  Salvar Mensagem
                 </Button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          {/* Settings Tab */}
-          <TabsContent value="settings" className="mt-6">
-            <div className="glass rounded-2xl p-6 max-w-2xl">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-                  <Settings className="w-5 h-5 text-primary-foreground" />
-                </div>
-                <div>
-                  <h2 className="text-xl font-semibold text-foreground">Configurações Gerais</h2>
-                  <p className="text-sm text-muted-foreground">Gerencie as configurações do WhatsApp</p>
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-secondary/50">
-                  <div>
-                    <Label className="text-foreground">Conexão WhatsApp</Label>
-                    <p className="text-xs text-muted-foreground">Status da conexão com a API</p>
+          {/* Broadcast Tab */}
+          <TabsContent value="broadcast" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Send className="w-5 h-5 text-primary" />
+                  Disparo de Mensagens
+                </CardTitle>
+                <CardDescription>
+                  Envie mensagens em massa para seus contatos
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Mensagem do Disparo</Label>
+                    <Textarea
+                      value={broadcastMessage}
+                      onChange={(e) => setBroadcastMessage(e.target.value)}
+                      placeholder="Digite a mensagem que será enviada para todos os contatos..."
+                      className="min-h-[120px] bg-muted/50"
+                    />
                   </div>
-                  <Switch
-                    checked={config.isActive}
-                    onCheckedChange={(checked) => setConfig({ ...config, isActive: checked })}
-                  />
+                  <Button onClick={sendBroadcast} className="gap-2">
+                    <Send className="w-4 h-4" />
+                    Enviar Disparo
+                  </Button>
                 </div>
 
-                <div className="space-y-2">
-                  <Label className="text-foreground">Nome do Bot</Label>
-                  <Input
-                    value={config.botName}
-                    onChange={(e) => setConfig({ ...config, botName: e.target.value })}
-                    className="bg-secondary border-border"
-                    placeholder="Nome do assistente virtual"
-                  />
-                </div>
-
-                <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                  <div className="flex items-start gap-3">
-                    <Smartphone className="w-5 h-5 text-amber-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Integração WhatsApp Business API</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Para conectar ao WhatsApp Business API, você precisará configurar suas credenciais. 
-                        Entre em contato para obter suporte na configuração.
-                      </p>
+                {/* Histórico */}
+                <div className="space-y-3">
+                  <h4 className="font-medium">Histórico de Disparos</h4>
+                  {broadcastHistory.map((broadcast) => (
+                    <div key={broadcast.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-card border border-border rounded-lg">
+                      <div className="flex-1 space-y-1">
+                        <p className="text-sm line-clamp-1">{broadcast.message}</p>
+                        <p className="text-xs text-muted-foreground">{broadcast.scheduledAt}</p>
+                      </div>
+                      <Badge 
+                        variant="outline"
+                        className={
+                          broadcast.status === 'sent' 
+                            ? "bg-green-500/10 text-green-500 border-green-500/20"
+                            : broadcast.status === 'pending'
+                            ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                            : "bg-red-500/10 text-red-500 border-red-500/20"
+                        }
+                      >
+                        {broadcast.status === 'sent' ? 'Enviado' : broadcast.status === 'pending' ? 'Pendente' : 'Falhou'}
+                      </Badge>
                     </div>
-                  </div>
+                  ))}
                 </div>
-
-                <Button onClick={handleSaveConfig} className="w-full gradient-primary text-primary-foreground gap-2">
-                  <Save className="w-4 h-4" />
-                  Salvar Alterações
-                </Button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
