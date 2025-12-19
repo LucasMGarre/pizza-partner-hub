@@ -35,7 +35,7 @@ import { database } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { QRCodeSVG } from 'qrcode.react';
 
-const API_BASE_URL = 'https://72.61.221.123:3001';
+const API_BASE_URL = 'https://72.61.221.123';
 
 interface Rule {
   id: string;
