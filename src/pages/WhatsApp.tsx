@@ -9,11 +9,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { 
-  MessageSquare, 
-  Power, 
-  Send, 
-  UserPlus, 
+import {
+  MessageSquare,
+  Power,
+  Send,
+  UserPlus,
   Phone,
   Bot,
   Zap,
@@ -36,7 +36,7 @@ import { database } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { QRCodeSVG } from 'qrcode.react';
 
-const API_BASE_URL = 'https://72.61.221.123';
+const API_BASE_URL = 'https://routineapp.com.br';
 
 interface Rule {
   id: string;
@@ -55,7 +55,7 @@ interface BroadcastMessage {
 const WhatsApp = () => {
   const { user } = useAuth();
   const userId = user?.uid || '';
-  
+
   // API Connection States
   const [isConnected, setIsConnected] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -67,7 +67,7 @@ const WhatsApp = () => {
   const [botEnabled, setBotEnabled] = useState(true);
   const [botPrompt, setBotPrompt] = useState('Você é um assistente virtual da Eco Pizzaria. Seja sempre cordial e ajude os clientes com informações sobre cardápio, preços e pedidos.');
   const [firstContactMessage, setFirstContactMessage] = useState('Olá! 👋 Bem-vindo à Eco Pizzaria! Como posso ajudar você hoje?');
-  
+
   // Rules States
   const [rules, setRules] = useState<Rule[]>([
     { id: '1', keyword: 'cardápio', response: 'Nosso cardápio completo está disponível em...', active: true },
@@ -75,11 +75,11 @@ const WhatsApp = () => {
     { id: '3', keyword: 'promoção', response: 'Confira nossas promoções da semana!', active: false },
   ]);
   const [newRule, setNewRule] = useState({ keyword: '', response: '' });
-  
+
   // Broadcast States
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [broadcastHistory, setBroadcastHistory] = useState<BroadcastMessage[]>([]);
-  
+
   // Send Message States
   const [phoneNumber, setPhoneNumber] = useState('');
   const [messageToSend, setMessageToSend] = useState('');
@@ -115,7 +115,7 @@ const WhatsApp = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/qr?userId=${userId}`);
       const data = await response.json();
-      
+
       if (data.connected) {
         setIsConnected(true);
         setQrCode(null);
@@ -140,16 +140,16 @@ const WhatsApp = () => {
   const connectWhatsApp = async () => {
     setIsConnecting(true);
     setQrCode(null);
-    
+
     try {
       const response = await fetch(`${API_BASE_URL}/connect`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId })
       });
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         toast.info('Gerando QR Code...');
         checkQRCode();
@@ -170,21 +170,21 @@ const WhatsApp = () => {
       toast.error('WhatsApp não está conectado!');
       return;
     }
-    
+
     if (!phoneNumber || !messageToSend) {
       toast.error('Preencha o número e a mensagem');
       return;
     }
-    
+
     // Validate phone number (only digits, 10-11 chars)
     const cleanNumber = phoneNumber.replace(/\D/g, '');
     if (cleanNumber.length < 10 || cleanNumber.length > 11) {
       toast.error('Número inválido. Use DDD + número (ex: 11999887766)');
       return;
     }
-    
+
     setIsSending(true);
-    
+
     try {
       const response = await fetch(`${API_BASE_URL}/send`, {
         method: 'POST',
@@ -195,9 +195,9 @@ const WhatsApp = () => {
           message: messageToSend
         })
       });
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         toast.success('Mensagem enviada com sucesso!');
         setMessageToSend('');
@@ -219,9 +219,11 @@ const WhatsApp = () => {
     return () => clearInterval(interval);
   }, [checkStatus]);
 
-  // Firebase config sync
+  // Firebase config sync - CORRIGIDO COM userId
   useEffect(() => {
-    const configRef = ref(database, 'whatsapp/config');
+    if (!userId) return;
+
+    const configRef = ref(database, `users/${userId}/whatsapp/config`);
     onValue(configRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -231,7 +233,7 @@ const WhatsApp = () => {
       }
     });
 
-    const rulesRef = ref(database, 'whatsapp/rules');
+    const rulesRef = ref(database, `users/${userId}/whatsapp/rules`);
     onValue(rulesRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -242,11 +244,15 @@ const WhatsApp = () => {
         setRules(rulesArray);
       }
     });
-  }, []);
+  }, [userId]);
 
   const saveConfig = async () => {
+    if (!userId) {
+      toast.error('Usuário não identificado');
+      return;
+    }
     try {
-      await set(ref(database, 'whatsapp/config'), {
+      await set(ref(database, `users/${userId}/whatsapp/config`), {
         botEnabled,
         botPrompt,
         firstContactMessage
@@ -258,13 +264,21 @@ const WhatsApp = () => {
   };
 
   const toggleBot = async () => {
+    if (!userId) {
+      toast.error('Usuário não identificado');
+      return;
+    }
     const newState = !botEnabled;
     setBotEnabled(newState);
-    await set(ref(database, 'whatsapp/config/botEnabled'), newState);
+    await set(ref(database, `users/${userId}/whatsapp/config/botEnabled`), newState);
     toast.success(newState ? 'Bot ativado!' : 'Bot desativado!');
   };
 
   const addRule = async () => {
+    if (!userId) {
+      toast.error('Usuário não identificado');
+      return;
+    }
     if (!newRule.keyword || !newRule.response) {
       toast.error('Preencha todos os campos');
       return;
@@ -272,25 +286,27 @@ const WhatsApp = () => {
     const id = Date.now().toString();
     const rule = { ...newRule, active: true, id };
     setRules([...rules, rule]);
-    await set(ref(database, `whatsapp/rules/${id}`), rule);
+    await set(ref(database, `users/${userId}/whatsapp/rules/${id}`), rule);
     setNewRule({ keyword: '', response: '' });
     toast.success('Regra adicionada!');
   };
 
   const toggleRule = async (id: string) => {
-    const updatedRules = rules.map(r => 
+    if (!userId) return;
+    const updatedRules = rules.map(r =>
       r.id === id ? { ...r, active: !r.active } : r
     );
     setRules(updatedRules);
     const rule = updatedRules.find(r => r.id === id);
     if (rule) {
-      await set(ref(database, `whatsapp/rules/${id}`), rule);
+      await set(ref(database, `users/${userId}/whatsapp/rules/${id}`), rule);
     }
   };
 
   const deleteRule = async (id: string) => {
+    if (!userId) return;
     setRules(rules.filter(r => r.id !== id));
-    await set(ref(database, `whatsapp/rules/${id}`), null);
+    await set(ref(database, `users/${userId}/whatsapp/rules/${id}`), null);
     toast.success('Regra removida!');
   };
 
@@ -323,13 +339,13 @@ const WhatsApp = () => {
             <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Painel WhatsApp</h1>
             <p className="text-muted-foreground mt-1">Configure e controle seu chatbot</p>
           </div>
-          
+
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-4 py-2">
               <div className={`w-2 h-2 rounded-full ${botEnabled && isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm font-medium">{botEnabled && isConnected ? 'Online' : 'Offline'}</span>
             </div>
-            <Button 
+            <Button
               onClick={toggleBot}
               variant={botEnabled ? "destructive" : "default"}
               className="gap-2"
@@ -592,12 +608,12 @@ const WhatsApp = () => {
                         <Label>Preview do Número</Label>
                         <div className="h-10 px-3 flex items-center bg-muted/30 rounded-md border border-border">
                           <span className="text-sm text-muted-foreground">
-                            {phoneNumber ? `+55 ${phoneNumber.slice(0,2)} ${phoneNumber.slice(2,7)}-${phoneNumber.slice(7)}` : 'Nenhum número digitado'}
+                            {phoneNumber ? `+55 ${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 7)}-${phoneNumber.slice(7)}` : 'Nenhum número digitado'}
                           </span>
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="space-y-2">
                       <Label>Mensagem</Label>
                       <Textarea
@@ -613,8 +629,8 @@ const WhatsApp = () => {
                       </div>
                     </div>
 
-                    <Button 
-                      onClick={sendMessage} 
+                    <Button
+                      onClick={sendMessage}
                       className="w-full sm:w-auto gap-2"
                       disabled={isSending || !phoneNumber || !messageToSend}
                     >
@@ -667,7 +683,6 @@ const WhatsApp = () => {
               </CardContent>
             </Card>
           </TabsContent>
-
           {/* Rules Tab */}
           <TabsContent value="rules" className="space-y-6">
             <Card>
@@ -776,7 +791,7 @@ const WhatsApp = () => {
                     className="min-h-[150px] bg-muted/50"
                   />
                 </div>
-                
+
                 {/* Preview */}
                 <div className="p-4 bg-muted/30 rounded-lg">
                   <p className="text-xs text-muted-foreground mb-2">Preview:</p>
@@ -845,14 +860,14 @@ const WhatsApp = () => {
                               <p className="text-sm line-clamp-1">{broadcast.message}</p>
                               <p className="text-xs text-muted-foreground">{broadcast.scheduledAt}</p>
                             </div>
-                            <Badge 
+                            <Badge
                               variant="outline"
                               className={
-                                broadcast.status === 'sent' 
+                                broadcast.status === 'sent'
                                   ? "bg-green-500/10 text-green-500 border-green-500/20"
                                   : broadcast.status === 'pending'
-                                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                                  : "bg-red-500/10 text-red-500 border-red-500/20"
+                                    ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                                    : "bg-red-500/10 text-red-500 border-red-500/20"
                               }
                             >
                               {broadcast.status === 'sent' ? 'Enviado' : broadcast.status === 'pending' ? 'Pendente' : 'Falhou'}
