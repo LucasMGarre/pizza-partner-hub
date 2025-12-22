@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -13,7 +12,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   MessageSquare,
   Power,
-  Send,
   UserPlus,
   Phone,
   Bot,
@@ -34,8 +32,6 @@ import {
   Video,
   FileText,
   X,
-  Upload,
-  MessagesSquare,
   PowerOff,
   Download,
   Music,
@@ -110,19 +106,7 @@ const WhatsApp = () => {
   const [rules, setRules] = useState<Rule[]>([]);
   const [newRule, setNewRule] = useState({ keyword: '', response: '' });
 
-  // Send Message States
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [messageToSend, setMessageToSend] = useState('');
-  const [sendMedia, setSendMedia] = useState<MediaItem[]>([]);
-  const [isSending, setIsSending] = useState(false);
-
-  // Broadcast States
-  const [broadcastMessage, setBroadcastMessage] = useState('');
-  const [broadcastNumbers, setBroadcastNumbers] = useState('');
-  const [broadcastMedia, setBroadcastMedia] = useState<MediaItem[]>([]);
-  const [isBroadcasting, setIsBroadcasting] = useState(false);
-
-  // Conversations States
+  // Contacts States
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [contactMessages, setContactMessages] = useState<Message[]>([]);
@@ -267,7 +251,7 @@ const WhatsApp = () => {
   };
 
   // Handle File Upload
-  const handleFileUpload = async (files: FileList | null, target: 'send' | 'broadcast' | 'firstContact') => {
+  const handleFileUpload = async (files: FileList | null, target: 'firstContact') => {
     if (!files || files.length === 0) return;
 
     const file = files[0];
@@ -291,11 +275,7 @@ const WhatsApp = () => {
         preview: url
       };
 
-      if (target === 'send') {
-        setSendMedia([...sendMedia, mediaItem]);
-      } else if (target === 'broadcast') {
-        setBroadcastMedia([...broadcastMedia, mediaItem]);
-      } else if (target === 'firstContact') {
+      if (target === 'firstContact') {
         setFirstContactMedia([...firstContactMedia, mediaItem]);
       }
 
@@ -307,127 +287,9 @@ const WhatsApp = () => {
   };
 
   // Remove Media
-  const removeMedia = (index: number, target: 'send' | 'broadcast' | 'firstContact') => {
-    if (target === 'send') {
-      setSendMedia(sendMedia.filter((_, i) => i !== index));
-    } else if (target === 'broadcast') {
-      setBroadcastMedia(broadcastMedia.filter((_, i) => i !== index));
-    } else if (target === 'firstContact') {
+  const removeMedia = (index: number, target: 'firstContact') => {
+    if (target === 'firstContact') {
       setFirstContactMedia(firstContactMedia.filter((_, i) => i !== index));
-    }
-  };
-
-  // Send Message
-  const sendMessage = async () => {
-    if (!isConnected) {
-      toast.error('WhatsApp não está conectado!');
-      return;
-    }
-
-    if (!phoneNumber) {
-      toast.error('Preencha o número');
-      return;
-    }
-
-    if (!messageToSend && sendMedia.length === 0) {
-      toast.error('Preencha a mensagem ou adicione mídia');
-      return;
-    }
-
-    const cleanNumber = phoneNumber.replace(/\D/g, '');
-    if (cleanNumber.length < 10 || cleanNumber.length > 11) {
-      toast.error('Número inválido. Use DDD + número (ex: 11999887766)');
-      return;
-    }
-
-    setIsSending(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          number: cleanNumber,
-          message: messageToSend,
-          media: sendMedia
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success('Mensagem enviada com sucesso!');
-        setMessageToSend('');
-        setSendMedia([]);
-      } else {
-        toast.error('Erro ao enviar: ' + (data.error || 'Erro desconhecido'));
-      }
-    } catch (error) {
-      console.error('Erro ao enviar mensagem:', error);
-      toast.error('Erro ao enviar mensagem');
-    } finally {
-      setIsSending(false);
-    }
-  };
-
-  // Send Broadcast
-  const sendBroadcast = async () => {
-    if (!isConnected) {
-      toast.error('WhatsApp não está conectado!');
-      return;
-    }
-
-    if (!broadcastNumbers) {
-      toast.error('Adicione números para o disparo');
-      return;
-    }
-
-    if (!broadcastMessage && broadcastMedia.length === 0) {
-      toast.error('Adicione mensagem ou mídia');
-      return;
-    }
-
-    const numbers = broadcastNumbers
-      .split('\n')
-      .map(n => n.trim().replace(/\D/g, ''))
-      .filter(n => n.length >= 10);
-
-    if (numbers.length === 0) {
-      toast.error('Nenhum número válido encontrado');
-      return;
-    }
-
-    setIsBroadcasting(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/broadcast`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          numbers,
-          message: broadcastMessage,
-          media: broadcastMedia,
-          delay: 2000
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.success) {
-        toast.success(`Disparo iniciado para ${numbers.length} contatos!`);
-        setBroadcastMessage('');
-        setBroadcastNumbers('');
-        setBroadcastMedia([]);
-      } else {
-        toast.error('Erro ao iniciar disparo');
-      }
-    } catch (error) {
-      console.error('Erro ao enviar disparo:', error);
-      toast.error('Erro ao enviar disparo');
-    } finally {
-      setIsBroadcasting(false);
     }
   };
 
@@ -445,7 +307,7 @@ const WhatsApp = () => {
       setContacts(data.contacts || []);
     } catch (error) {
       console.error('Erro ao carregar contatos:', error);
-      toast.error('Erro ao carregar conversas');
+      toast.error('Erro ao carregar contatos');
     } finally {
       setLoadingContacts(false);
     }
@@ -560,14 +422,6 @@ const WhatsApp = () => {
     </div>
   );
 
-  // Get Media Icon
-  const getMediaIcon = (mimetype: string) => {
-    if (mimetype.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
-    if (mimetype.startsWith('video/')) return <Video className="w-4 h-4" />;
-    if (mimetype.startsWith('audio/')) return <Music className="w-4 h-4" />;
-    return <File className="w-4 h-4" />;
-  };
-
   // Initial status check and polling
   useEffect(() => {
     if (userId) {
@@ -614,8 +468,8 @@ const WhatsApp = () => {
   }, [userId]);
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6 pb-8">
+    <div className="min-h-screen bg-background p-6">
+      <div className="max-w-7xl mx-auto space-y-6 pb-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -730,22 +584,14 @@ const WhatsApp = () => {
 
         {/* Tabs */}
         <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 lg:grid-cols-7 h-auto gap-1 bg-muted/50 p-1">
+          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 h-auto gap-1 bg-muted/50 p-1">
             <TabsTrigger value="dashboard" className="gap-2">
               <TrendingUp className="w-4 h-4" />
               <span className="hidden sm:inline">Dashboard</span>
             </TabsTrigger>
-            <TabsTrigger value="conversations" className="gap-2">
-              <MessagesSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Conversas</span>
-            </TabsTrigger>
-            <TabsTrigger value="send" className="gap-2">
-              <Send className="w-4 h-4" />
-              <span className="hidden sm:inline">Enviar</span>
-            </TabsTrigger>
-            <TabsTrigger value="broadcast" className="gap-2">
-              <MessageSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Disparo</span>
+            <TabsTrigger value="contacts" className="gap-2">
+              <Users className="w-4 h-4" />
+              <span className="hidden sm:inline">Contatos</span>
             </TabsTrigger>
             <TabsTrigger value="first-contact" className="gap-2">
               <UserPlus className="w-4 h-4" />
@@ -780,16 +626,16 @@ const WhatsApp = () => {
             </div>
           </TabsContent>
 
-          {/* Conversations Tab */}
-          <TabsContent value="conversations" className="space-y-4">
+          {/* Contacts Tab */}
+          <TabsContent value="contacts" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <MessagesSquare className="w-5 h-5" />
-                  Conversas
+                  <Users className="w-5 h-5" />
+                  Contatos
                 </CardTitle>
                 <CardDescription>
-                  Visualize todas as conversas e mensagens recebidas
+                  Visualize todos os contatos e mensagens recebidas
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -797,7 +643,7 @@ const WhatsApp = () => {
                   {loadingContacts ? (
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Carregando...</>
                   ) : (
-                    <><RefreshCw className="w-4 h-4 mr-2" /> Carregar Conversas</>
+                    <><RefreshCw className="w-4 h-4 mr-2" /> Carregar Contatos</>
                   )}
                 </Button>
 
@@ -812,7 +658,7 @@ const WhatsApp = () => {
                         {contacts.length === 0 ? (
                           <div className="text-center py-8 text-muted-foreground">
                             <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                            <p>Nenhuma conversa ainda</p>
+                            <p>Nenhum contato ainda</p>
                           </div>
                         ) : (
                           <div className="space-y-2">
@@ -821,8 +667,8 @@ const WhatsApp = () => {
                                 key={contact.number}
                                 onClick={() => loadContactMessages(contact)}
                                 className={`w-full p-3 rounded-lg border text-left transition-colors ${selectedContact?.number === contact.number
-                                    ? 'bg-primary/10 border-primary'
-                                    : 'hover:bg-muted border-border'
+                                  ? 'bg-primary/10 border-primary'
+                                  : 'hover:bg-muted border-border'
                                   }`}
                               >
                                 <div className="flex items-center justify-between">
@@ -890,257 +736,6 @@ const WhatsApp = () => {
                     </CardContent>
                   </Card>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Send Message Tab */}
-          <TabsContent value="send" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Send className="w-5 h-5" />
-                  Enviar Mensagem
-                </CardTitle>
-                <CardDescription>
-                  Envie mensagens individuais com texto, fotos, vídeos, áudios ou documentos
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="phone">Número do Destinatário</Label>
-                  <Input
-                    id="phone"
-                    placeholder="Ex: 11999887766"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}
-                    disabled={!isConnected}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    DDD + número (sem espaços ou caracteres especiais)
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="message">Mensagem</Label>
-                  <Textarea
-                    id="message"
-                    placeholder="Digite sua mensagem..."
-                    value={messageToSend}
-                    onChange={(e) => setMessageToSend(e.target.value)}
-                    rows={4}
-                    disabled={!isConnected}
-                  />
-                </div>
-
-                <div>
-                  <Label>Adicionar Mídia</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('send-file')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <ImageIcon className="w-4 h-4" />
-                      Imagem
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('send-video')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <Video className="w-4 h-4" />
-                      Vídeo
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('send-audio')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <Mic className="w-4 h-4" />
-                      Áudio
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('send-doc')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <FileText className="w-4 h-4" />
-                      Documento
-                    </Button>
-                  </div>
-                  <input
-                    id="send-file"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
-                  />
-                  <input
-                    id="send-video"
-                    type="file"
-                    accept="video/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
-                  />
-                  <input
-                    id="send-audio"
-                    type="file"
-                    accept="audio/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
-                  />
-                  <input
-                    id="send-doc"
-                    type="file"
-                    accept=".pdf,.doc,.docx,.txt,.xlsx,.csv"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
-                  />
-                  {sendMedia.length > 0 && <MediaPreview media={sendMedia} onRemove={(idx) => removeMedia(idx, 'send')} />}
-                </div>
-
-                <Button onClick={sendMessage} disabled={!isConnected || isSending} className="w-full gap-2">
-                  {isSending ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Enviando...</>
-                  ) : (
-                    <><Send className="w-4 h-4" /> Enviar Mensagem</>
-                  )}
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Broadcast Tab */}
-          <TabsContent value="broadcast" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5" />
-                  Disparo em Massa
-                </CardTitle>
-                <CardDescription>
-                  Envie mensagens para múltiplos contatos de uma vez
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="numbers">Números dos Destinatários</Label>
-                  <Textarea
-                    id="numbers"
-                    placeholder="11999887766&#10;21988776655&#10;31977665544"
-                    value={broadcastNumbers}
-                    onChange={(e) => setBroadcastNumbers(e.target.value)}
-                    rows={6}
-                    disabled={!isConnected}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Um número por linha (DDD + número)
-                  </p>
-                </div>
-
-                <div>
-                  <Label htmlFor="broadcast-message">Mensagem</Label>
-                  <Textarea
-                    id="broadcast-message"
-                    placeholder="Digite a mensagem que será enviada para todos..."
-                    value={broadcastMessage}
-                    onChange={(e) => setBroadcastMessage(e.target.value)}
-                    rows={4}
-                    disabled={!isConnected}
-                  />
-                </div>
-
-                <div>
-                  <Label>Adicionar Mídia</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('broadcast-file')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <ImageIcon className="w-4 h-4" />
-                      Imagem
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('broadcast-video')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <Video className="w-4 h-4" />
-                      Vídeo
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('broadcast-audio')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <Mic className="w-4 h-4" />
-                      Áudio
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => document.getElementById('broadcast-doc')?.click()}
-                      disabled={!isConnected}
-                      className="gap-2"
-                    >
-                      <FileText className="w-4 h-4" />
-                      Documento
-                    </Button>
-                  </div>
-                  <input
-                    id="broadcast-file"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
-                  />
-                  <input
-                    id="broadcast-video"
-                    type="file"
-                    accept="video/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
-                  />
-                  <input
-                    id="broadcast-audio"
-                    type="file"
-                    accept="audio/*"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
-                  />
-                  <input
-                    id="broadcast-doc"
-                    type="file"
-                    accept=".pdf,.doc,.docx,.txt,.xlsx,.csv"
-                    className="hidden"
-                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
-                  />
-                  {broadcastMedia.length > 0 && <MediaPreview media={broadcastMedia} onRemove={(idx) => removeMedia(idx, 'broadcast')} />}
-                </div>
-
-                <Button onClick={sendBroadcast} disabled={!isConnected || isBroadcasting} className="w-full gap-2">
-                  {isBroadcasting ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Enviando Disparo...</>
-                  ) : (
-                    <><MessageSquare className="w-4 h-4" /> Iniciar Disparo</>
-                  )}
-                </Button>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1377,7 +972,7 @@ const WhatsApp = () => {
           </TabsContent>
         </Tabs>
       </div>
-    </DashboardLayout>
+    </div>
   );
 };
 
