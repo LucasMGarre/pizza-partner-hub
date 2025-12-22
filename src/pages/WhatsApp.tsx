@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   MessageSquare,
   Power,
@@ -16,10 +17,8 @@ import {
   UserPlus,
   Phone,
   Bot,
-  Zap,
   CheckCircle,
   XCircle,
-  Clock,
   Users,
   TrendingUp,
   Shield,
@@ -29,10 +28,22 @@ import {
   WifiOff,
   Loader2,
   QrCode,
-  RefreshCw
+  RefreshCw,
+  Image as ImageIcon,
+  Mic,
+  Video,
+  FileText,
+  X,
+  Upload,
+  MessagesSquare,
+  PowerOff,
+  Download,
+  Music,
+  File
 } from 'lucide-react';
 import { ref, set, onValue } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { database, storage } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -45,11 +56,33 @@ interface Rule {
   active: boolean;
 }
 
-interface BroadcastMessage {
+interface MediaItem {
+  type: 'base64' | 'url';
+  mimetype: string;
+  data?: string;
+  url?: string;
+  filename?: string;
+  caption?: string;
+  preview?: string;
+}
+
+interface Contact {
+  number: string;
+  name: string;
+  firstContact: string;
+  lastMessage: string;
+  messageCount: number;
+}
+
+interface Message {
   id: string;
-  message: string;
-  scheduledAt: string;
-  status: 'pending' | 'sent' | 'failed';
+  from: string;
+  fromName: string;
+  body: string;
+  timestamp: number;
+  date: string;
+  type: string;
+  isGroup: boolean;
 }
 
 const WhatsApp = () => {
@@ -62,33 +95,44 @@ const WhatsApp = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionLoading, setConnectionLoading] = useState(true);
   const [messagesCount, setMessagesCount] = useState(0);
+  const [contactsCount, setContactsCount] = useState(0);
 
   // Bot States
   const [botEnabled, setBotEnabled] = useState(true);
-  const [botPrompt, setBotPrompt] = useState('Você é um assistente virtual da Eco Pizzaria. Seja sempre cordial e ajude os clientes com informações sobre cardápio, preços e pedidos.');
-  const [firstContactMessage, setFirstContactMessage] = useState('Olá! 👋 Bem-vindo à Eco Pizzaria! Como posso ajudar você hoje?');
+  const [botPrompt, setBotPrompt] = useState('Você é um assistente virtual. Seja sempre cordial e prestativo.');
+
+  // First Contact States
+  const [firstContactEnabled, setFirstContactEnabled] = useState(true);
+  const [firstContactMessage, setFirstContactMessage] = useState('Olá! 👋 Bem-vindo! Como posso ajudar você hoje?');
+  const [firstContactMedia, setFirstContactMedia] = useState<MediaItem[]>([]);
 
   // Rules States
-  const [rules, setRules] = useState<Rule[]>([
-    { id: '1', keyword: 'cardápio', response: 'Nosso cardápio completo está disponível em...', active: true },
-    { id: '2', keyword: 'horário', response: 'Funcionamos de terça a domingo, das 18h às 23h.', active: true },
-    { id: '3', keyword: 'promoção', response: 'Confira nossas promoções da semana!', active: false },
-  ]);
+  const [rules, setRules] = useState<Rule[]>([]);
   const [newRule, setNewRule] = useState({ keyword: '', response: '' });
-
-  // Broadcast States
-  const [broadcastMessage, setBroadcastMessage] = useState('');
-  const [broadcastHistory, setBroadcastHistory] = useState<BroadcastMessage[]>([]);
 
   // Send Message States
   const [phoneNumber, setPhoneNumber] = useState('');
   const [messageToSend, setMessageToSend] = useState('');
+  const [sendMedia, setSendMedia] = useState<MediaItem[]>([]);
   const [isSending, setIsSending] = useState(false);
+
+  // Broadcast States
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastNumbers, setBroadcastNumbers] = useState('');
+  const [broadcastMedia, setBroadcastMedia] = useState<MediaItem[]>([]);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+
+  // Conversations States
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [contactMessages, setContactMessages] = useState<Message[]>([]);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
 
   const stats = {
     messagesReceived: messagesCount,
     messagesSent: Math.floor(messagesCount * 0.7),
-    activeConversations: Math.floor(messagesCount / 10),
+    activeConversations: contactsCount,
     avgResponseTime: '2.3 min'
   };
 
@@ -99,6 +143,8 @@ const WhatsApp = () => {
       const data = await response.json();
       setIsConnected(data.connected);
       setMessagesCount(data.messagesCount || 0);
+      setContactsCount(data.contactsCount || 0);
+      setBotEnabled(data.botEnabled !== undefined ? data.botEnabled : true);
       if (data.connected) {
         setQrCode(null);
         setIsConnecting(false);
@@ -123,10 +169,8 @@ const WhatsApp = () => {
         toast.success('WhatsApp conectado com sucesso!');
       } else if (data.qrCode) {
         setQrCode(data.qrCode);
-        // Continue polling if not connected
         setTimeout(checkQRCode, 3000);
       } else {
-        // Still generating QR, try again
         setTimeout(checkQRCode, 3000);
       }
     } catch (error) {
@@ -164,6 +208,115 @@ const WhatsApp = () => {
     }
   };
 
+  // Disconnect WhatsApp
+  const disconnectWhatsApp = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/disconnect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setIsConnected(false);
+        setQrCode(null);
+        toast.success('WhatsApp desconectado com sucesso!');
+      } else {
+        toast.error('Erro ao desconectar');
+      }
+    } catch (error) {
+      console.error('Erro ao desconectar:', error);
+      toast.error('Erro ao desconectar WhatsApp');
+    }
+  };
+
+  // Toggle Bot
+  const toggleBot = async () => {
+    if (!userId) {
+      toast.error('Usuário não identificado');
+      return;
+    }
+    const newState = !botEnabled;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/bot/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, enabled: newState })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setBotEnabled(newState);
+        await set(ref(database, `users/${userId}/whatsapp/config/botEnabled`), newState);
+        toast.success(newState ? 'Bot ativado!' : 'Bot desativado!');
+      }
+    } catch (error) {
+      toast.error('Erro ao alterar estado do bot');
+    }
+  };
+
+  // Upload Media to Firebase
+  const uploadMediaToFirebase = async (file: File): Promise<string> => {
+    const mediaRef = storageRef(storage, `whatsapp/${userId}/${Date.now()}_${file.name}`);
+    await uploadBytes(mediaRef, file);
+    return await getDownloadURL(mediaRef);
+  };
+
+  // Handle File Upload
+  const handleFileUpload = async (files: FileList | null, target: 'send' | 'broadcast' | 'firstContact') => {
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    const maxSize = 16 * 1024 * 1024; // 16MB
+
+    if (file.size > maxSize) {
+      toast.error('Arquivo muito grande! Máximo 16MB');
+      return;
+    }
+
+    toast.info('Fazendo upload...');
+
+    try {
+      const url = await uploadMediaToFirebase(file);
+
+      const mediaItem: MediaItem = {
+        type: 'url',
+        mimetype: file.type,
+        url: url,
+        filename: file.name,
+        preview: url
+      };
+
+      if (target === 'send') {
+        setSendMedia([...sendMedia, mediaItem]);
+      } else if (target === 'broadcast') {
+        setBroadcastMedia([...broadcastMedia, mediaItem]);
+      } else if (target === 'firstContact') {
+        setFirstContactMedia([...firstContactMedia, mediaItem]);
+      }
+
+      toast.success('Upload concluído!');
+    } catch (error) {
+      console.error('Erro no upload:', error);
+      toast.error('Erro ao fazer upload');
+    }
+  };
+
+  // Remove Media
+  const removeMedia = (index: number, target: 'send' | 'broadcast' | 'firstContact') => {
+    if (target === 'send') {
+      setSendMedia(sendMedia.filter((_, i) => i !== index));
+    } else if (target === 'broadcast') {
+      setBroadcastMedia(broadcastMedia.filter((_, i) => i !== index));
+    } else if (target === 'firstContact') {
+      setFirstContactMedia(firstContactMedia.filter((_, i) => i !== index));
+    }
+  };
+
   // Send Message
   const sendMessage = async () => {
     if (!isConnected) {
@@ -171,12 +324,16 @@ const WhatsApp = () => {
       return;
     }
 
-    if (!phoneNumber || !messageToSend) {
-      toast.error('Preencha o número e a mensagem');
+    if (!phoneNumber) {
+      toast.error('Preencha o número');
       return;
     }
 
-    // Validate phone number (only digits, 10-11 chars)
+    if (!messageToSend && sendMedia.length === 0) {
+      toast.error('Preencha a mensagem ou adicione mídia');
+      return;
+    }
+
     const cleanNumber = phoneNumber.replace(/\D/g, '');
     if (cleanNumber.length < 10 || cleanNumber.length > 11) {
       toast.error('Número inválido. Use DDD + número (ex: 11999887766)');
@@ -192,7 +349,8 @@ const WhatsApp = () => {
         body: JSON.stringify({
           userId,
           number: cleanNumber,
-          message: messageToSend
+          message: messageToSend,
+          media: sendMedia
         })
       });
 
@@ -201,6 +359,7 @@ const WhatsApp = () => {
       if (data.success) {
         toast.success('Mensagem enviada com sucesso!');
         setMessageToSend('');
+        setSendMedia([]);
       } else {
         toast.error('Erro ao enviar: ' + (data.error || 'Erro desconhecido'));
       }
@@ -212,40 +371,103 @@ const WhatsApp = () => {
     }
   };
 
-  // Initial status check and polling
-  useEffect(() => {
-    checkStatus();
-    const interval = setInterval(checkStatus, 5000);
-    return () => clearInterval(interval);
-  }, [checkStatus]);
+  // Send Broadcast
+  const sendBroadcast = async () => {
+    if (!isConnected) {
+      toast.error('WhatsApp não está conectado!');
+      return;
+    }
 
-  // Firebase config sync - CORRIGIDO COM userId
-  useEffect(() => {
-    if (!userId) return;
+    if (!broadcastNumbers) {
+      toast.error('Adicione números para o disparo');
+      return;
+    }
 
-    const configRef = ref(database, `users/${userId}/whatsapp/config`);
-    onValue(configRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        if (data.botEnabled !== undefined) setBotEnabled(data.botEnabled);
-        if (data.botPrompt) setBotPrompt(data.botPrompt);
-        if (data.firstContactMessage) setFirstContactMessage(data.firstContactMessage);
+    if (!broadcastMessage && broadcastMedia.length === 0) {
+      toast.error('Adicione mensagem ou mídia');
+      return;
+    }
+
+    const numbers = broadcastNumbers
+      .split('\n')
+      .map(n => n.trim().replace(/\D/g, ''))
+      .filter(n => n.length >= 10);
+
+    if (numbers.length === 0) {
+      toast.error('Nenhum número válido encontrado');
+      return;
+    }
+
+    setIsBroadcasting(true);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          numbers,
+          message: broadcastMessage,
+          media: broadcastMedia,
+          delay: 2000
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success(`Disparo iniciado para ${numbers.length} contatos!`);
+        setBroadcastMessage('');
+        setBroadcastNumbers('');
+        setBroadcastMedia([]);
+      } else {
+        toast.error('Erro ao iniciar disparo');
       }
-    });
+    } catch (error) {
+      console.error('Erro ao enviar disparo:', error);
+      toast.error('Erro ao enviar disparo');
+    } finally {
+      setIsBroadcasting(false);
+    }
+  };
 
-    const rulesRef = ref(database, `users/${userId}/whatsapp/rules`);
-    onValue(rulesRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const rulesArray = Object.entries(data).map(([id, rule]: [string, any]) => ({
-          id,
-          ...rule
-        }));
-        setRules(rulesArray);
-      }
-    });
-  }, [userId]);
+  // Load Contacts
+  const loadContacts = async () => {
+    if (!isConnected) {
+      toast.error('WhatsApp não está conectado!');
+      return;
+    }
 
+    setLoadingContacts(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/contacts?userId=${userId}`);
+      const data = await response.json();
+      setContacts(data.contacts || []);
+    } catch (error) {
+      console.error('Erro ao carregar contatos:', error);
+      toast.error('Erro ao carregar conversas');
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  // Load Contact Messages
+  const loadContactMessages = async (contact: Contact) => {
+    setSelectedContact(contact);
+    setLoadingMessages(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/messages?userId=${userId}&from=${contact.number}`);
+      const data = await response.json();
+      setContactMessages(data.messages || []);
+    } catch (error) {
+      console.error('Erro ao carregar mensagens:', error);
+      toast.error('Erro ao carregar mensagens');
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  // Save Config
   const saveConfig = async () => {
     if (!userId) {
       toast.error('Usuário não identificado');
@@ -255,7 +477,11 @@ const WhatsApp = () => {
       await set(ref(database, `users/${userId}/whatsapp/config`), {
         botEnabled,
         botPrompt,
-        firstContactMessage
+        firstContact: {
+          enabled: firstContactEnabled,
+          message: firstContactMessage,
+          media: firstContactMedia
+        }
       });
       toast.success('Configurações salvas!');
     } catch (error) {
@@ -263,17 +489,7 @@ const WhatsApp = () => {
     }
   };
 
-  const toggleBot = async () => {
-    if (!userId) {
-      toast.error('Usuário não identificado');
-      return;
-    }
-    const newState = !botEnabled;
-    setBotEnabled(newState);
-    await set(ref(database, `users/${userId}/whatsapp/config/botEnabled`), newState);
-    toast.success(newState ? 'Bot ativado!' : 'Bot desativado!');
-  };
-
+  // Add Rule
   const addRule = async () => {
     if (!userId) {
       toast.error('Usuário não identificado');
@@ -291,6 +507,7 @@ const WhatsApp = () => {
     toast.success('Regra adicionada!');
   };
 
+  // Toggle Rule
   const toggleRule = async (id: string) => {
     if (!userId) return;
     const updatedRules = rules.map(r =>
@@ -303,6 +520,7 @@ const WhatsApp = () => {
     }
   };
 
+  // Delete Rule
   const deleteRule = async (id: string) => {
     if (!userId) return;
     setRules(rules.filter(r => r.id !== id));
@@ -310,39 +528,104 @@ const WhatsApp = () => {
     toast.success('Regra removida!');
   };
 
-  const sendBroadcast = () => {
-    if (!broadcastMessage) {
-      toast.error('Digite uma mensagem');
-      return;
-    }
-    if (!isConnected) {
-      toast.error('WhatsApp não está conectado!');
-      return;
-    }
-    const newBroadcast: BroadcastMessage = {
-      id: Date.now().toString(),
-      message: broadcastMessage,
-      scheduledAt: new Date().toLocaleString('pt-BR'),
-      status: 'pending'
-    };
-    setBroadcastHistory([newBroadcast, ...broadcastHistory]);
-    setBroadcastMessage('');
-    toast.success('Disparo agendado!');
+  // Media Preview Component
+  const MediaPreview = ({ media, onRemove }: { media: MediaItem[], onRemove: (index: number) => void }) => (
+    <div className="flex flex-wrap gap-2 mt-3">
+      {media.map((item, idx) => (
+        <div key={idx} className="relative group">
+          <div className="w-20 h-20 rounded-lg border-2 border-border bg-muted/30 flex items-center justify-center overflow-hidden">
+            {item.mimetype.startsWith('image/') ? (
+              <img src={item.preview || item.url} alt="preview" className="w-full h-full object-cover" />
+            ) : item.mimetype.startsWith('video/') ? (
+              <Video className="w-8 h-8 text-muted-foreground" />
+            ) : item.mimetype.startsWith('audio/') ? (
+              <Mic className="w-8 h-8 text-muted-foreground" />
+            ) : (
+              <FileText className="w-8 h-8 text-muted-foreground" />
+            )}
+          </div>
+          <Button
+            size="icon"
+            variant="destructive"
+            className="absolute -top-2 -right-2 w-6 h-6 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => onRemove(idx)}
+          >
+            <X className="w-3 h-3" />
+          </Button>
+          <p className="text-xs text-muted-foreground mt-1 text-center truncate w-20">
+            {item.filename}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Get Media Icon
+  const getMediaIcon = (mimetype: string) => {
+    if (mimetype.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
+    if (mimetype.startsWith('video/')) return <Video className="w-4 h-4" />;
+    if (mimetype.startsWith('audio/')) return <Music className="w-4 h-4" />;
+    return <File className="w-4 h-4" />;
   };
+
+  // Initial status check and polling
+  useEffect(() => {
+    if (userId) {
+      checkStatus();
+      const interval = setInterval(checkStatus, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [checkStatus, userId]);
+
+  // Firebase config sync
+  useEffect(() => {
+    if (!userId) return;
+
+    const configRef = ref(database, `users/${userId}/whatsapp/config`);
+    const unsubConfig = onValue(configRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        if (data.botEnabled !== undefined) setBotEnabled(data.botEnabled);
+        if (data.botPrompt) setBotPrompt(data.botPrompt);
+        if (data.firstContact) {
+          if (data.firstContact.enabled !== undefined) setFirstContactEnabled(data.firstContact.enabled);
+          if (data.firstContact.message) setFirstContactMessage(data.firstContact.message);
+          if (data.firstContact.media) setFirstContactMedia(data.firstContact.media);
+        }
+      }
+    });
+
+    const rulesRef = ref(database, `users/${userId}/whatsapp/rules`);
+    const unsubRules = onValue(rulesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const rulesArray = Object.entries(data).map(([id, rule]: [string, any]) => ({
+          id,
+          ...rule
+        }));
+        setRules(rulesArray);
+      }
+    });
+
+    return () => {
+      unsubConfig();
+      unsubRules();
+    };
+  }, [userId]);
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header com Status */}
+      <div className="space-y-6 pb-8">
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Painel WhatsApp</h1>
+            <h1 className="text-3xl font-bold text-foreground">Painel WhatsApp</h1>
             <p className="text-muted-foreground mt-1">Configure e controle seu chatbot</p>
           </div>
 
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-4 py-2">
-              <div className={`w-2 h-2 rounded-full ${botEnabled && isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+            <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-4 py-2.5 shadow-sm">
+              <div className={`w-2.5 h-2.5 rounded-full ${botEnabled && isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
               <span className="text-sm font-medium">{botEnabled && isConnected ? 'Online' : 'Offline'}</span>
             </div>
             <Button
@@ -352,14 +635,14 @@ const WhatsApp = () => {
               disabled={!isConnected}
             >
               <Power className="w-4 h-4" />
-              {botEnabled ? 'Desligar' : 'Ligar'}
+              {botEnabled ? 'Desligar Bot' : 'Ligar Bot'}
             </Button>
           </div>
         </div>
 
-        {/* WhatsApp Connection Card */}
+        {/* Connection Card */}
         <Card className={`border-2 ${isConnected ? 'border-green-500/30 bg-gradient-to-r from-green-500/10 to-green-600/5' : 'border-amber-500/30 bg-gradient-to-r from-amber-500/10 to-amber-600/5'}`}>
-          <CardContent className="p-4 sm:p-6">
+          <CardContent className="p-6">
             {connectionLoading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -376,13 +659,21 @@ const WhatsApp = () => {
                       <p className="text-lg font-semibold text-foreground">WhatsApp Conectado</p>
                       <CheckCircle className="w-5 h-5 text-green-500" />
                     </div>
-                    <p className="text-sm text-muted-foreground">ID: {userId} • {messagesCount} mensagens processadas</p>
+                    <p className="text-sm text-muted-foreground">
+                      {messagesCount} mensagens • {contactsCount} contatos
+                    </p>
                   </div>
                 </div>
-                <Button onClick={connectWhatsApp} variant="outline" className="gap-2">
-                  <RefreshCw className="w-4 h-4" />
-                  Reconectar
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={connectWhatsApp} variant="outline" className="gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    Reconectar
+                  </Button>
+                  <Button onClick={disconnectWhatsApp} variant="destructive" className="gap-2">
+                    <PowerOff className="w-4 h-4" />
+                    Desconectar
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className="space-y-6">
@@ -407,13 +698,12 @@ const WhatsApp = () => {
                   )}
                 </div>
 
-                {/* QR Code Display */}
                 {(isConnecting || qrCode) && (
                   <div className="flex flex-col items-center justify-center py-6 space-y-4">
                     {qrCode ? (
                       <>
                         <div className="p-4 bg-white rounded-2xl shadow-lg">
-                          <QRCodeSVG value={qrCode} size={200} level="M" />
+                          <QRCodeSVG value={qrCode} size={220} level="M" />
                         </div>
                         <div className="text-center space-y-2">
                           <p className="font-medium text-foreground flex items-center gap-2 justify-center">
@@ -421,7 +711,7 @@ const WhatsApp = () => {
                             Escaneie o QR Code com seu WhatsApp
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            Abra o WhatsApp {'>'} Menu {'>'} Dispositivos Conectados {'>'} Conectar Dispositivo
+                            WhatsApp → Menu → Aparelhos conectados → Conectar um aparelho
                           </p>
                         </div>
                       </>
@@ -438,446 +728,650 @@ const WhatsApp = () => {
           </CardContent>
         </Card>
 
+        {/* Tabs */}
         <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto gap-1 bg-muted/50 p-1">
-            <TabsTrigger value="dashboard" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+          <TabsList className="grid w-full grid-cols-3 lg:grid-cols-7 h-auto gap-1 bg-muted/50 p-1">
+            <TabsTrigger value="dashboard" className="gap-2">
               <TrendingUp className="w-4 h-4" />
               <span className="hidden sm:inline">Dashboard</span>
             </TabsTrigger>
-            <TabsTrigger value="send" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger value="conversations" className="gap-2">
+              <MessagesSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Conversas</span>
+            </TabsTrigger>
+            <TabsTrigger value="send" className="gap-2">
               <Send className="w-4 h-4" />
               <span className="hidden sm:inline">Enviar</span>
             </TabsTrigger>
-            <TabsTrigger value="prompt" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Bot className="w-4 h-4" />
-              <span className="hidden sm:inline">Prompt</span>
+            <TabsTrigger value="broadcast" className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Disparo</span>
             </TabsTrigger>
-            <TabsTrigger value="rules" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Shield className="w-4 h-4" />
-              <span className="hidden sm:inline">Regras</span>
-            </TabsTrigger>
-            <TabsTrigger value="first-contact" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <TabsTrigger value="first-contact" className="gap-2">
               <UserPlus className="w-4 h-4" />
               <span className="hidden sm:inline">1º Contato</span>
             </TabsTrigger>
-            <TabsTrigger value="broadcast" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <MessageSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Disparo</span>
+            <TabsTrigger value="prompt" className="gap-2">
+              <Bot className="w-4 h-4" />
+              <span className="hidden sm:inline">Prompt</span>
+            </TabsTrigger>
+            <TabsTrigger value="rules" className="gap-2">
+              <Shield className="w-4 h-4" />
+              <span className="hidden sm:inline">Regras</span>
             </TabsTrigger>
           </TabsList>
 
           {/* Dashboard Tab */}
           <TabsContent value="dashboard" className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardContent className="p-4 sm:p-6">
+              <Card>
+                <CardContent className="p-6">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                      <MessageSquare className="w-5 h-5 text-blue-500" />
+                    <div className="w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                      <MessageSquare className="w-6 h-6 text-blue-500" />
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Recebidas</p>
-                      <p className="text-xl font-bold">{stats.messagesReceived}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center">
-                      <Send className="w-5 h-5 text-green-500" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Enviadas</p>
-                      <p className="text-xl font-bold">{stats.messagesSent}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                      <Users className="w-5 h-5 text-amber-500" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Conversas Ativas</p>
-                      <p className="text-xl font-bold">{stats.activeConversations}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                      <Clock className="w-5 h-5 text-purple-500" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Tempo Resposta</p>
-                      <p className="text-xl font-bold">{stats.avgResponseTime}</p>
+                      <p className="text-sm text-muted-foreground">Recebidas</p>
+                      <p className="text-2xl font-bold">{stats.messagesReceived}</p>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
 
+          {/* Conversations Tab */}
+          <TabsContent value="conversations" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-amber-500" />
-                  Status do Sistema
+                  <MessagesSquare className="w-5 h-5" />
+                  Conversas
                 </CardTitle>
+                <CardDescription>
+                  Visualize todas as conversas e mensagens recebidas
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    {isConnected ? <CheckCircle className="w-5 h-5 text-green-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
-                    <span>Conexão WhatsApp</span>
-                  </div>
-                  <Badge variant="outline" className={isConnected ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"}>
-                    {isConnected ? 'Conectado' : 'Desconectado'}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    {botEnabled && isConnected ? <CheckCircle className="w-5 h-5 text-green-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
-                    <span>Bot de Atendimento</span>
-                  </div>
-                  <Badge variant="outline" className={botEnabled && isConnected ? "bg-green-500/10 text-green-500 border-green-500/20" : "bg-red-500/10 text-red-500 border-red-500/20"}>
-                    {botEnabled && isConnected ? 'Ativo' : 'Inativo'}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                    <span>Regras Automáticas</span>
-                  </div>
-                  <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20">
-                    {rules.filter(r => r.active).length} ativas
-                  </Badge>
+              <CardContent>
+                <Button onClick={loadContacts} disabled={!isConnected || loadingContacts} className="w-full mb-4">
+                  {loadingContacts ? (
+                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Carregando...</>
+                  ) : (
+                    <><RefreshCw className="w-4 h-4 mr-2" /> Carregar Conversas</>
+                  )}
+                </Button>
+
+                <div className="grid md:grid-cols-2 gap-4">
+                  {/* Contacts List */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Contatos ({contacts.length})</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ScrollArea className="h-[400px] pr-4">
+                        {contacts.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p>Nenhuma conversa ainda</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {contacts.map((contact) => (
+                              <button
+                                key={contact.number}
+                                onClick={() => loadContactMessages(contact)}
+                                className={`w-full p-3 rounded-lg border text-left transition-colors ${selectedContact?.number === contact.number
+                                    ? 'bg-primary/10 border-primary'
+                                    : 'hover:bg-muted border-border'
+                                  }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <p className="font-medium truncate">{contact.name}</p>
+                                    <p className="text-xs text-muted-foreground">{contact.number}</p>
+                                  </div>
+                                  <Badge variant="secondary">{contact.messageCount}</Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {new Date(contact.lastMessage).toLocaleString('pt-BR')}
+                                </p>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
+
+                  {/* Messages */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">
+                        {selectedContact ? `Chat com ${selectedContact.name}` : 'Selecione um contato'}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ScrollArea className="h-[400px] pr-4">
+                        {!selectedContact ? (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <MessageSquare className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p>Selecione um contato para ver as mensagens</p>
+                          </div>
+                        ) : loadingMessages ? (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                          </div>
+                        ) : contactMessages.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <MessageSquare className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                            <p>Nenhuma mensagem</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {contactMessages.map((msg) => (
+                              <div key={msg.id} className="p-3 rounded-lg bg-muted/50 border border-border">
+                                <div className="flex items-start justify-between mb-1">
+                                  <span className="font-medium text-sm">{msg.fromName}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {new Date(msg.timestamp).toLocaleTimeString('pt-BR')}
+                                  </span>
+                                </div>
+                                <p className="text-sm">{msg.body}</p>
+                                {msg.type !== 'chat' && (
+                                  <Badge variant="outline" className="mt-2">
+                                    {msg.type}
+                                  </Badge>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* Send Message Tab */}
-          <TabsContent value="send" className="space-y-6">
+          <TabsContent value="send" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Send className="w-5 h-5 text-primary" />
+                  <Send className="w-5 h-5" />
                   Enviar Mensagem
                 </CardTitle>
                 <CardDescription>
-                  Envie mensagens individuais para qualquer número
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {!isConnected ? (
-                  <div className="flex flex-col items-center justify-center py-8 text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-amber-500/20 flex items-center justify-center">
-                      <WifiOff className="w-8 h-8 text-amber-500" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">WhatsApp não conectado</p>
-                      <p className="text-sm text-muted-foreground">Conecte seu WhatsApp para enviar mensagens</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>Número de Telefone</Label>
-                        <Input
-                          placeholder="11999887766"
-                          value={phoneNumber}
-                          onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                          className="bg-muted/50"
-                          maxLength={11}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Apenas números: DDD + Número (ex: 11999887766)
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Preview do Número</Label>
-                        <div className="h-10 px-3 flex items-center bg-muted/30 rounded-md border border-border">
-                          <span className="text-sm text-muted-foreground">
-                            {phoneNumber ? `+55 ${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 7)}-${phoneNumber.slice(7)}` : 'Nenhum número digitado'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Mensagem</Label>
-                      <Textarea
-                        value={messageToSend}
-                        onChange={(e) => setMessageToSend(e.target.value)}
-                        placeholder="Digite sua mensagem..."
-                        className="min-h-[120px] bg-muted/50"
-                      />
-                      <div className="flex justify-between items-center">
-                        <p className="text-xs text-muted-foreground">
-                          {messageToSend.length} caracteres
-                        </p>
-                      </div>
-                    </div>
-
-                    <Button
-                      onClick={sendMessage}
-                      className="w-full sm:w-auto gap-2"
-                      disabled={isSending || !phoneNumber || !messageToSend}
-                    >
-                      {isSending ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Enviando...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="w-4 h-4" />
-                          Enviar Mensagem
-                        </>
-                      )}
-                    </Button>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Prompt Tab */}
-          <TabsContent value="prompt" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-primary" />
-                  Prompt do Bot
-                </CardTitle>
-                <CardDescription>
-                  Configure a personalidade e comportamento do seu chatbot
+                  Envie mensagens individuais com texto, fotos, vídeos, áudios ou documentos
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Instruções do Bot</Label>
-                  <Textarea
-                    value={botPrompt}
-                    onChange={(e) => setBotPrompt(e.target.value)}
-                    placeholder="Digite as instruções para o bot..."
-                    className="min-h-[200px] bg-muted/50"
+                <div>
+                  <Label htmlFor="phone">Número do Destinatário</Label>
+                  <Input
+                    id="phone"
+                    placeholder="Ex: 11999887766"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    disabled={!isConnected}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Descreva como o bot deve se comportar, qual tom usar e quais informações priorizar.
+                  <p className="text-xs text-muted-foreground mt-1">
+                    DDD + número (sem espaços ou caracteres especiais)
                   </p>
                 </div>
-                <Button onClick={saveConfig} className="w-full sm:w-auto">
-                  Salvar Prompt
-                </Button>
-              </CardContent>
-            </Card>
-          </TabsContent>
-          {/* Rules Tab */}
-          <TabsContent value="rules" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-primary" />
-                  Regras do Chatbot
-                </CardTitle>
-                <CardDescription>
-                  Configure respostas automáticas baseadas em palavras-chave
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Nova Regra */}
-                <div className="p-4 bg-muted/30 rounded-lg space-y-4">
-                  <h4 className="font-medium flex items-center gap-2">
-                    <Plus className="w-4 h-4" />
-                    Adicionar Nova Regra
-                  </h4>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Palavra-chave</Label>
-                      <Input
-                        placeholder="Ex: cardápio, preço, horário..."
-                        value={newRule.keyword}
-                        onChange={(e) => setNewRule({ ...newRule, keyword: e.target.value })}
-                        className="bg-background/50"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Resposta Automática</Label>
-                      <Input
-                        placeholder="Resposta quando detectar a palavra..."
-                        value={newRule.response}
-                        onChange={(e) => setNewRule({ ...newRule, response: e.target.value })}
-                        className="bg-background/50"
-                      />
-                    </div>
-                  </div>
-                  <Button onClick={addRule} className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    Adicionar Regra
-                  </Button>
-                </div>
 
-                {/* Lista de Regras */}
-                <div className="space-y-3">
-                  <h4 className="font-medium">Regras Configuradas</h4>
-                  {rules.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-4 text-center">Nenhuma regra configurada</p>
-                  ) : (
-                    rules.map((rule) => (
-                      <div key={rule.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-card border border-border rounded-lg">
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
-                              {rule.keyword}
-                            </Badge>
-                            <Badge variant={rule.active ? "default" : "secondary"} className="text-xs">
-                              {rule.active ? 'Ativa' : 'Inativa'}
-                            </Badge>
-                          </div>
-                          <p className="text-sm text-muted-foreground line-clamp-1">{rule.response}</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={rule.active}
-                            onCheckedChange={() => toggleRule(rule.id)}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => deleteRule(rule.id)}
-                            className="text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* First Contact Tab */}
-          <TabsContent value="first-contact" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <UserPlus className="w-5 h-5 text-primary" />
-                  Mensagem de Primeiro Contato
-                </CardTitle>
-                <CardDescription>
-                  Configure a mensagem enviada automaticamente para novos contatos
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Mensagem de Boas-vindas</Label>
+                <div>
+                  <Label htmlFor="message">Mensagem</Label>
                   <Textarea
-                    value={firstContactMessage}
-                    onChange={(e) => setFirstContactMessage(e.target.value)}
-                    placeholder="Digite a mensagem de primeiro contato..."
-                    className="min-h-[150px] bg-muted/50"
+                    id="message"
+                    placeholder="Digite sua mensagem..."
+                    value={messageToSend}
+                    onChange={(e) => setMessageToSend(e.target.value)}
+                    rows={4}
+                    disabled={!isConnected}
                   />
                 </div>
 
-                {/* Preview */}
-                <div className="p-4 bg-muted/30 rounded-lg">
-                  <p className="text-xs text-muted-foreground mb-2">Preview:</p>
-                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 max-w-[280px]">
-                    <p className="text-sm">{firstContactMessage}</p>
+                <div>
+                  <Label>Adicionar Mídia</Label>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('send-file')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                      Imagem
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('send-video')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <Video className="w-4 h-4" />
+                      Vídeo
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('send-audio')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <Mic className="w-4 h-4" />
+                      Áudio
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('send-doc')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Documento
+                    </Button>
                   </div>
+                  <input
+                    id="send-file"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
+                  />
+                  <input
+                    id="send-video"
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
+                  />
+                  <input
+                    id="send-audio"
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
+                  />
+                  <input
+                    id="send-doc"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.xlsx,.csv"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'send')}
+                  />
+                  {sendMedia.length > 0 && <MediaPreview media={sendMedia} onRemove={(idx) => removeMedia(idx, 'send')} />}
                 </div>
 
-                <Button onClick={saveConfig} className="w-full sm:w-auto">
-                  Salvar Mensagem
+                <Button onClick={sendMessage} disabled={!isConnected || isSending} className="w-full gap-2">
+                  {isSending ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Enviando...</>
+                  ) : (
+                    <><Send className="w-4 h-4" /> Enviar Mensagem</>
+                  )}
                 </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* Broadcast Tab */}
-          <TabsContent value="broadcast" className="space-y-6">
+          <TabsContent value="broadcast" className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-primary" />
-                  Disparo de Mensagens
+                  <MessageSquare className="w-5 h-5" />
+                  Disparo em Massa
                 </CardTitle>
                 <CardDescription>
-                  Envie mensagens em massa para seus contatos
+                  Envie mensagens para múltiplos contatos de uma vez
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {!isConnected ? (
-                  <div className="flex flex-col items-center justify-center py-8 text-center space-y-4">
-                    <div className="w-16 h-16 rounded-full bg-amber-500/20 flex items-center justify-center">
-                      <WifiOff className="w-8 h-8 text-amber-500" />
-                    </div>
-                    <div>
-                      <p className="font-medium text-foreground">WhatsApp não conectado</p>
-                      <p className="text-sm text-muted-foreground">Conecte seu WhatsApp para enviar disparos</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>Mensagem do Disparo</Label>
-                        <Textarea
-                          value={broadcastMessage}
-                          onChange={(e) => setBroadcastMessage(e.target.value)}
-                          placeholder="Digite a mensagem que será enviada para todos os contatos..."
-                          className="min-h-[120px] bg-muted/50"
-                        />
-                      </div>
-                      <Button onClick={sendBroadcast} className="gap-2">
-                        <Send className="w-4 h-4" />
-                        Enviar Disparo
-                      </Button>
-                    </div>
+              <CardContent className="space-y-4">
+                <div>
+                  <Label htmlFor="numbers">Números dos Destinatários</Label>
+                  <Textarea
+                    id="numbers"
+                    placeholder="11999887766&#10;21988776655&#10;31977665544"
+                    value={broadcastNumbers}
+                    onChange={(e) => setBroadcastNumbers(e.target.value)}
+                    rows={6}
+                    disabled={!isConnected}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Um número por linha (DDD + número)
+                  </p>
+                </div>
 
-                    {/* Histórico */}
-                    <div className="space-y-3">
-                      <h4 className="font-medium">Histórico de Disparos</h4>
-                      {broadcastHistory.length === 0 ? (
-                        <p className="text-sm text-muted-foreground py-4 text-center">Nenhum disparo realizado</p>
-                      ) : (
-                        broadcastHistory.map((broadcast) => (
-                          <div key={broadcast.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-card border border-border rounded-lg">
-                            <div className="flex-1 space-y-1">
-                              <p className="text-sm line-clamp-1">{broadcast.message}</p>
-                              <p className="text-xs text-muted-foreground">{broadcast.scheduledAt}</p>
-                            </div>
-                            <Badge
-                              variant="outline"
-                              className={
-                                broadcast.status === 'sent'
-                                  ? "bg-green-500/10 text-green-500 border-green-500/20"
-                                  : broadcast.status === 'pending'
-                                    ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                                    : "bg-red-500/10 text-red-500 border-red-500/20"
-                              }
-                            >
-                              {broadcast.status === 'sent' ? 'Enviado' : broadcast.status === 'pending' ? 'Pendente' : 'Falhou'}
-                            </Badge>
-                          </div>
-                        ))
-                      )}
+                <div>
+                  <Label htmlFor="broadcast-message">Mensagem</Label>
+                  <Textarea
+                    id="broadcast-message"
+                    placeholder="Digite a mensagem que será enviada para todos..."
+                    value={broadcastMessage}
+                    onChange={(e) => setBroadcastMessage(e.target.value)}
+                    rows={4}
+                    disabled={!isConnected}
+                  />
+                </div>
+
+                <div>
+                  <Label>Adicionar Mídia</Label>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('broadcast-file')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                      Imagem
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('broadcast-video')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <Video className="w-4 h-4" />
+                      Vídeo
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('broadcast-audio')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <Mic className="w-4 h-4" />
+                      Áudio
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('broadcast-doc')?.click()}
+                      disabled={!isConnected}
+                      className="gap-2"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Documento
+                    </Button>
+                  </div>
+                  <input
+                    id="broadcast-file"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
+                  />
+                  <input
+                    id="broadcast-video"
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
+                  />
+                  <input
+                    id="broadcast-audio"
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
+                  />
+                  <input
+                    id="broadcast-doc"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.xlsx,.csv"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'broadcast')}
+                  />
+                  {broadcastMedia.length > 0 && <MediaPreview media={broadcastMedia} onRemove={(idx) => removeMedia(idx, 'broadcast')} />}
+                </div>
+
+                <Button onClick={sendBroadcast} disabled={!isConnected || isBroadcasting} className="w-full gap-2">
+                  {isBroadcasting ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Enviando Disparo...</>
+                  ) : (
+                    <><MessageSquare className="w-4 h-4" /> Iniciar Disparo</>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* First Contact Tab */}
+          <TabsContent value="first-contact" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserPlus className="w-5 h-5" />
+                  Mensagem de Primeiro Contato
+                </CardTitle>
+                <CardDescription>
+                  Configure a mensagem automática enviada quando alguém fala com você pela primeira vez
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label htmlFor="first-enabled">Ativar Primeiro Contato</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Enviar mensagem automática para novos contatos
+                    </p>
+                  </div>
+                  <Switch
+                    id="first-enabled"
+                    checked={firstContactEnabled}
+                    onCheckedChange={setFirstContactEnabled}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="first-message">Mensagem</Label>
+                  <Textarea
+                    id="first-message"
+                    placeholder="Olá! 👋 Bem-vindo..."
+                    value={firstContactMessage}
+                    onChange={(e) => setFirstContactMessage(e.target.value)}
+                    rows={4}
+                    disabled={!firstContactEnabled}
+                  />
+                </div>
+
+                <div>
+                  <Label>Adicionar Mídia ao Primeiro Contato</Label>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('first-file')?.click()}
+                      disabled={!firstContactEnabled}
+                      className="gap-2"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                      Imagem
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('first-video')?.click()}
+                      disabled={!firstContactEnabled}
+                      className="gap-2"
+                    >
+                      <Video className="w-4 h-4" />
+                      Vídeo
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('first-audio')?.click()}
+                      disabled={!firstContactEnabled}
+                      className="gap-2"
+                    >
+                      <Mic className="w-4 h-4" />
+                      Áudio
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => document.getElementById('first-doc')?.click()}
+                      disabled={!firstContactEnabled}
+                      className="gap-2"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Documento
+                    </Button>
+                  </div>
+                  <input
+                    id="first-file"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'firstContact')}
+                  />
+                  <input
+                    id="first-video"
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'firstContact')}
+                  />
+                  <input
+                    id="first-audio"
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'firstContact')}
+                  />
+                  <input
+                    id="first-doc"
+                    type="file"
+                    accept=".pdf,.doc,.docx,.txt,.xlsx,.csv"
+                    className="hidden"
+                    onChange={(e) => handleFileUpload(e.target.files, 'firstContact')}
+                  />
+                  {firstContactMedia.length > 0 && <MediaPreview media={firstContactMedia} onRemove={(idx) => removeMedia(idx, 'firstContact')} />}
+                </div>
+
+                <Button onClick={saveConfig} className="w-full gap-2">
+                  <Download className="w-4 h-4" />
+                  Salvar Configuração
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Prompt Tab */}
+          <TabsContent value="prompt" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="w-5 h-5" />
+                  Prompt do Bot
+                </CardTitle>
+                <CardDescription>
+                  Configure a personalidade e instruções do seu chatbot
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Label htmlFor="prompt">Instruções do Bot</Label>
+                  <Textarea
+                    id="prompt"
+                    placeholder="Você é um assistente..."
+                    value={botPrompt}
+                    onChange={(e) => setBotPrompt(e.target.value)}
+                    rows={10}
+                  />
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Defina como o bot deve se comportar, seu tom de voz e área de atuação
+                  </p>
+                </div>
+
+                <Button onClick={saveConfig} className="w-full gap-2">
+                  <Download className="w-4 h-4" />
+                  Salvar Prompt
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Rules Tab */}
+          <TabsContent value="rules" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5" />
+                  Regras de Resposta
+                </CardTitle>
+                <CardDescription>
+                  Crie respostas automáticas baseadas em palavras-chave
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="keyword">Palavra-chave</Label>
+                    <Input
+                      id="keyword"
+                      placeholder="Ex: preço, cardápio, horário"
+                      value={newRule.keyword}
+                      onChange={(e) => setNewRule({ ...newRule, keyword: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="response">Resposta Automática</Label>
+                    <Textarea
+                      id="response"
+                      placeholder="Digite a resposta que será enviada..."
+                      value={newRule.response}
+                      onChange={(e) => setNewRule({ ...newRule, response: e.target.value })}
+                      rows={3}
+                    />
+                  </div>
+                  <Button onClick={addRule} className="w-full gap-2">
+                    <Plus className="w-4 h-4" />
+                    Adicionar Regra
+                  </Button>
+                </div>
+
+                <div className="space-y-2 mt-6">
+                  <Label>Regras Ativas</Label>
+                  {rules.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Shield className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>Nenhuma regra configurada</p>
                     </div>
-                  </>
-                )}
+                  ) : (
+                    <div className="space-y-2">
+                      {rules.map((rule) => (
+                        <div key={rule.id} className="flex items-center gap-2 p-3 border rounded-lg">
+                          <Switch
+                            checked={rule.active}
+                            onCheckedChange={() => toggleRule(rule.id)}
+                          />
+                          <div className="flex-1">
+                            <p className="font-medium text-sm">{rule.keyword}</p>
+                            <p className="text-xs text-muted-foreground truncate">{rule.response}</p>
+                          </div>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => deleteRule(rule.id)}
+                          >
+                            <Trash2 className="w-4 h-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
