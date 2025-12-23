@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   MessageSquare,
+  ShoppingBag,
   Power,
   UserPlus,
   Phone,
@@ -43,6 +45,7 @@ import { database, storage } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { QRCodeSVG } from 'qrcode.react';
 
+// const API_BASE_URL = 'http://localhost:3001';
 const API_BASE_URL = 'https://routineapp.com.br';
 
 interface Rule {
@@ -81,9 +84,12 @@ interface Message {
   isGroup: boolean;
 }
 
+
+
 const WhatsApp = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const userId = user?.uid || '';
+  const navigate = useNavigate();
 
   // API Connection States
   const [isConnected, setIsConnected] = useState(false);
@@ -112,6 +118,134 @@ const WhatsApp = () => {
   const [contactMessages, setContactMessages] = useState<Message[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
+
+  // Adicione após os outros estados
+  const [orders, setOrders] = useState<any[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [approvingOrder, setApprovingOrder] = useState<string | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState<string | null>(null);
+
+  // Adicione após a função loadContactMessages
+  const loadOrders = async () => {
+    setLoadingOrders(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders?userId=${userId}`);
+      const data = await response.json();
+      setOrders(data.orders || []);
+    } catch (error) {
+      console.error('Erro ao carregar pedidos:', error);
+      toast.error('Erro ao carregar pedidos');
+    } finally {
+      setLoadingOrders(false);
+    }
+  };
+
+  // Função para atualizar status do pedido
+  const updateOrderStatus = async (orderId: string, newStatus: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders/update-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, orderId, status: newStatus })
+      });
+
+      if (response.ok) {
+        toast.success('Status atualizado!');
+        loadOrders(); // Recarregar pedidos
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar status:', error);
+      toast.error('Erro ao atualizar status');
+    }
+  };
+
+  // Função para aprovar pagamento PIX
+  const approvePixPayment = async (orderId: string) => {
+    setApprovingOrder(orderId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders/approve-pix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, orderId })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success('Pagamento PIX aprovado! Cliente notificado.');
+        loadOrders(); // Recarregar pedidos
+      } else {
+        toast.error(data.error || 'Erro ao aprovar pagamento');
+      }
+    } catch (error) {
+      console.error('Erro ao aprovar PIX:', error);
+      toast.error('Erro ao aprovar pagamento');
+    } finally {
+      setApprovingOrder(null);
+    }
+  };
+
+  // Função para fazer logout
+  const handleLogout = async () => {
+    try {
+      await logout();
+      toast.success('Desconectado com sucesso!');
+      navigate('/login');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      toast.error('Erro ao desconectar da conta');
+    }
+  };
+
+  // Função para deletar pedido permanentemente
+  const deleteOrder = async (orderId: string) => {
+    if (!confirm('Tem certeza que deseja deletar este pedido permanentemente?')) return;
+
+    setDeletingOrder(orderId);
+    try {
+      // Deletar diretamente do Firebase
+      const orderRef = ref(database, `users/${userId}/whatsapp/orders/${orderId}`);
+      await set(orderRef, null);
+
+      toast.success('Pedido deletado!');
+      loadOrders(); // Recarregar lista
+    } catch (error) {
+      console.error('Erro ao deletar pedido:', error);
+      toast.error('Erro ao deletar pedido');
+    } finally {
+      setDeletingOrder(null);
+    }
+  };
+
+  // Função para formatar valor
+  const formatPrice = (value: number) => {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(value);
+  };
+
+  // Função para cor do status
+  const getStatusColor = (status: string) => {
+    const colors: Record<string, string> = {
+      pending: 'bg-yellow-500',
+      preparing: 'bg-blue-500',
+      ready: 'bg-green-500',
+      delivered: 'bg-gray-500'
+    };
+    return colors[status] || 'bg-gray-500';
+  };
+
+  // Função para traduzir status
+  const getStatusLabel = (status: string) => {
+    const labels: Record<string, string> = {
+      pending: 'Pendente',
+      preparing: 'Em Preparo',
+      ready: 'Pronto',
+      delivered: 'Entregue'
+    };
+    return labels[status] || status;
+  };
 
   const stats = {
     messagesReceived: messagesCount,
@@ -431,6 +565,18 @@ const WhatsApp = () => {
     }
   }, [checkStatus, userId]);
 
+  // Auto-refresh de pedidos a cada 10 segundos
+  useEffect(() => {
+    if (isConnected && userId) {
+      loadOrders(); // Carrega imediatamente
+      const interval = setInterval(() => {
+        loadOrders(); // Atualiza a cada 10 segundos
+      }, 10000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isConnected, userId]);
+
   // Firebase config sync
   useEffect(() => {
     if (!userId) return;
@@ -467,6 +613,7 @@ const WhatsApp = () => {
     };
   }, [userId]);
 
+
   return (
     <div className="min-h-screen bg-background p-6">
       <div className="max-w-7xl mx-auto space-y-6 pb-8">
@@ -490,6 +637,14 @@ const WhatsApp = () => {
             >
               <Power className="w-4 h-4" />
               {botEnabled ? 'Desligar Bot' : 'Ligar Bot'}
+            </Button>
+            <Button
+              onClick={handleLogout}
+              variant="outline"
+              className="gap-2 border-destructive text-destructive hover:bg-destructive hover:text-white"
+            >
+              <PowerOff className="w-4 h-4" />
+              Sair da Conta
             </Button>
           </div>
         </div>
@@ -584,7 +739,7 @@ const WhatsApp = () => {
 
         {/* Tabs */}
         <Tabs defaultValue="dashboard" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5 h-auto gap-1 bg-muted/50 p-1">
+          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-6 h-auto gap-1 bg-muted/50 p-1">
             <TabsTrigger value="dashboard" className="gap-2">
               <TrendingUp className="w-4 h-4" />
               <span className="hidden sm:inline">Dashboard</span>
@@ -592,6 +747,10 @@ const WhatsApp = () => {
             <TabsTrigger value="contacts" className="gap-2">
               <Users className="w-4 h-4" />
               <span className="hidden sm:inline">Contatos</span>
+            </TabsTrigger>
+            <TabsTrigger value="orders" className="gap-2">
+              <ShoppingBag className="w-4 h-4" />
+              <span className="hidden sm:inline">Pedidos</span>
             </TabsTrigger>
             <TabsTrigger value="first-contact" className="gap-2">
               <UserPlus className="w-4 h-4" />
@@ -736,6 +895,191 @@ const WhatsApp = () => {
                     </CardContent>
                   </Card>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Orders Tab - ADICIONE ESTA ABA COMPLETA */}
+          <TabsContent value="orders" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <ShoppingBag className="w-5 h-5" />
+                      Pedidos
+                    </CardTitle>
+                    <CardDescription>
+                      Gerencie todos os pedidos realizados pelos clientes
+                    </CardDescription>
+                  </div>
+                  <Button onClick={loadOrders} disabled={loadingOrders} variant="outline" className="gap-2">
+                    {loadingOrders ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Carregando...</>
+                    ) : (
+                      <><RefreshCw className="w-4 h-4" /> Atualizar</>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loadingOrders ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : orders.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <ShoppingBag className="w-16 h-16 mx-auto mb-3 opacity-30" />
+                    <p className="text-lg font-medium">Nenhum pedido ainda</p>
+                    <p className="text-sm">Os pedidos realizados aparecerão aqui</p>
+                  </div>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {orders.map((order) => (
+                      <Card key={order.id} className="overflow-hidden border-2">
+                        <CardHeader className="pb-3 bg-muted/30">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <CardTitle className="text-base">Pedido #{order.id.slice(-6)}</CardTitle>
+                              <CardDescription className="text-xs mt-1 space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                  <Phone className="w-3 h-3" />
+                                  <span className="font-medium">{order.contactName || 'Cliente'}</span>
+                                  <span className="text-muted-foreground">• {order.contactNumber}</span>
+                                </div>
+                                <div>{new Date(order.date).toLocaleString('pt-BR')}</div>
+                                {order.paymentMethod && (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-medium">💳 {order.paymentMethod}</span>
+                                    {order.paymentMethod === 'PIX' && !order.paymentApproved && (
+                                      <Badge variant="destructive" className="text-xs">Aguardando Aprovação</Badge>
+                                    )}
+                                    {order.paymentMethod === 'PIX' && order.paymentApproved && (
+                                      <Badge variant="default" className="text-xs bg-green-600">✓ Aprovado</Badge>
+                                    )}
+                                  </div>
+                                )}
+                              </CardDescription>
+                            </div>
+                            <Badge className={`${getStatusColor(order.status)} text-white`}>
+                              {getStatusLabel(order.status)}
+                            </Badge>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="pt-4 space-y-3">
+                          {/* Cliente */}
+                          <div className="flex items-center gap-2 text-sm">
+                            <Phone className="w-4 h-4 text-muted-foreground" />
+                            <span className="font-medium">{order.contactNumber}</span>
+                          </div>
+
+                          {/* Items */}
+                          <div className="space-y-1.5">
+                            <p className="text-xs font-medium text-muted-foreground uppercase">Itens:</p>
+                            {order.items?.map((item: any, idx: number) => (
+                              <div key={idx} className="flex justify-between text-sm bg-muted/50 p-2 rounded">
+                                <span>{item.quantidade}x {item.nome}</span>
+                                <span className="font-medium">{formatPrice(item.preco)}</span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Observações */}
+                          {order.observacoes && (
+                            <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-2 rounded">
+                              <p className="text-xs font-medium text-amber-800 dark:text-amber-400 mb-1">Observações:</p>
+                              <p className="text-xs text-amber-700 dark:text-amber-300">{order.observacoes}</p>
+                            </div>
+                          )}
+
+                          {/* Total */}
+                          <div className="flex justify-between items-center pt-2 border-t">
+                            <span className="font-semibold text-lg">Total:</span>
+                            <span className="font-bold text-xl text-primary">{formatPrice(order.total)}</span>
+                          </div>
+
+                          {/* Actions */}
+                          {/* Actions */}
+                          {/* Actions */}
+                          <div className="flex flex-col gap-2 pt-2">
+                            {/* Botão de aprovar PIX */}
+                            {order.status === 'pending' &&
+                              order.paymentMethod === 'PIX' &&
+                              !order.paymentApproved && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => approvePixPayment(order.id)}
+                                  disabled={approvingOrder === order.id}
+                                  className="w-full gap-1 bg-orange-600 hover:bg-orange-700"
+                                >
+                                  {approvingOrder === order.id ? (
+                                    <><Loader2 className="w-4 h-4 animate-spin" /> Aprovando...</>
+                                  ) : (
+                                    <>🏦 Aprovar Pagamento PIX</>
+                                  )}
+                                </Button>
+                              )}
+
+                            {/* Botão iniciar preparo */}
+                            {order.status === 'pending' &&
+                              (order.paymentMethod !== 'PIX' || order.paymentApproved) && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => updateOrderStatus(order.id, 'preparing')}
+                                  className="w-full gap-1"
+                                >
+                                  Iniciar Preparo
+                                </Button>
+                              )}
+
+                            {order.status === 'preparing' && (
+                              <Button
+                                size="sm"
+                                onClick={() => updateOrderStatus(order.id, 'ready')}
+                                variant="default"
+                                className="w-full gap-1 bg-green-600 hover:bg-green-700"
+                              >
+                                Marcar Pronto
+                              </Button>
+                            )}
+
+                            {order.status === 'ready' && (
+                              <Button
+                                size="sm"
+                                onClick={() => updateOrderStatus(order.id, 'delivered')}
+                                variant="secondary"
+                                className="w-full gap-1"
+                              >
+                                Marcar Entregue
+                              </Button>
+                            )}
+
+                            {order.status === 'delivered' && (
+                              <Badge variant="secondary" className="w-full justify-center py-2">
+                                ✅ Pedido Concluído
+                              </Badge>
+                            )}
+
+                            {/* BOTÃO DELETAR - APARECE EM TODOS OS STATUS */}
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => deleteOrder(order.id)}
+                              disabled={deletingOrder === order.id}
+                              className="w-full gap-1 mt-1"
+                            >
+                              {deletingOrder === order.id ? (
+                                <><Loader2 className="w-4 h-4 animate-spin" /> Deletando...</>
+                              ) : (
+                                <><Trash2 className="w-4 h-4" /> Deletar Pedido</>
+                              )}
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
