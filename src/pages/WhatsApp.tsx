@@ -45,8 +45,8 @@ import { database, storage } from '@/lib/firebase';
 import { toast } from 'sonner';
 import { QRCodeSVG } from 'qrcode.react';
 
-// const API_BASE_URL = 'http://localhost:3001';
-const API_BASE_URL = 'https://routineapp.com.br';
+const API_BASE_URL = 'http://localhost:3001';
+// const API_BASE_URL = 'https://routineapp.com.br';
 
 interface Rule {
   id: string;
